@@ -1,6 +1,6 @@
 {
-  "name": "Minimal Chat",
-  "description": "Minimal Android chat app UI screen in dark gray theme with Claude-style floating pill input.",
+  "name": "Noro AI",
+  "description": "Noro AI - Kişisel Yapay Zeka Asistanı ve Rutin Planlayıcı",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

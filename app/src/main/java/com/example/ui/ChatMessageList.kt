@@ -539,25 +539,6 @@ private fun AiMessageItem(
                 AiLoadingItem()
             }
 
-            if (message.isStreaming) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(top = 6.dp)
-                ) {
-                    CircularProgressIndicator(
-                        color = Color(0xFF60A5FA),
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(12.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Yazıyor...",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextMuted
-                    )
-                }
-            }
-
             // Artifact File Cards (Generated HTML, TXT, SVG, JSON files)
             // Displays sleek file card in chat; tapping opens full-screen preview with download & share buttons
             if (allFiles.isNotEmpty()) {

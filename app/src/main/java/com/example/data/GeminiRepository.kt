@@ -66,6 +66,7 @@ class GeminiRepository(private val context: Context) {
      */
     val memoryManager = MemoryManager(context)
     val taskManager = TaskManager(context)
+    val routineContextManager = RoutineContextManager(context)
 
     fun sendMessageStream(
         userPrompt: String,
@@ -534,6 +535,7 @@ class GeminiRepository(private val context: Context) {
 
         val memoryText = memoryManager.getFormattedMemoriesForSystemPrompt()
         val taskText = taskManager.getFormattedTasksForSystemPrompt()
+        val routineText = routineContextManager.routineSummary.value
         val personaInstruction = persona.systemInstruction
 
         val fullSystemPrompt = buildString {
@@ -544,6 +546,9 @@ class GeminiRepository(private val context: Context) {
             }
             if (taskText.isNotBlank()) {
                 append(taskText).append("\n")
+            }
+            if (routineText.isNotBlank()) {
+                append(routineText).append("\n")
             }
             append("""
             İNTERNET VE GÜNCEL BİLGİ ARAŞTIRMA KURALI (ÇOK ÖNEMLİ):
