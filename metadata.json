@@ -1,0 +1,6 @@
+{
+  "name": "Minimal Chat",
+  "description": "Minimal Android chat app UI screen in dark gray theme with Claude-style floating pill input.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
