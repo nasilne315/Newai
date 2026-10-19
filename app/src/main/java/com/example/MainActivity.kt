@@ -14,6 +14,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.example.data.FirebaseHelper.ensureInitialized(this)
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {

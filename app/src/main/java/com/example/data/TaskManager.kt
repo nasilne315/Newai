@@ -1,40 +1,96 @@
 package com.example.data
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
 import com.example.model.TaskItem
-import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
+import org.json.JSONObject
 
-class TaskManager(context: Context) {
-    private val db = FirebaseFirestore.getInstance()
-    private val collection = db.collection("noro_tasks")
-
+class TaskManager(private val context: Context) {
+    private val prefs: SharedPreferences = context.getSharedPreferences("personal_assistant_tasks_prefs", Context.MODE_PRIVATE)
     private val _tasks = MutableStateFlow<List<TaskItem>>(emptyList())
     val tasks: StateFlow<List<TaskItem>> = _tasks.asStateFlow()
 
+    private val firestore get() = FirebaseHelper.getFirestore(context)
+    private val collection get() = firestore?.collection("noro_tasks")
+
     init {
+        loadLocalTasks()
         listenToFirestore()
     }
 
-    private fun listenToFirestore() {
-        collection.addSnapshotListener { snapshot, error ->
-            if (error != null) return@addSnapshotListener
-            if (snapshot != null) {
-                val list = mutableListOf<TaskItem>()
-                for (doc in snapshot.documents) {
-                    val id = doc.getString("id") ?: doc.id
-                    val title = doc.getString("title") ?: ""
-                    val isCompleted = doc.getBoolean("isCompleted") ?: false
-                    val category = doc.getString("category") ?: "Genel"
-                    val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
-                    if (title.isNotBlank()) {
-                        list.add(TaskItem(id = id, title = title, isCompleted = isCompleted, category = category, timestamp = timestamp))
-                    }
-                }
-                _tasks.value = list.sortedByDescending { it.timestamp }
+    private fun loadLocalTasks() {
+        try {
+            val jsonString = prefs.getString("saved_tasks", null) ?: return
+            val array = JSONArray(jsonString)
+            val list = mutableListOf<TaskItem>()
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    TaskItem(
+                        id = obj.optString("id", java.util.UUID.randomUUID().toString()),
+                        title = obj.getString("title"),
+                        isCompleted = obj.optBoolean("isCompleted", false),
+                        category = obj.optString("category", "Genel"),
+                        timestamp = obj.optLong("timestamp", System.currentTimeMillis())
+                    )
+                )
             }
+            _tasks.value = list
+        } catch (e: Exception) {
+            Log.e("TaskManager", "Error reading local tasks", e)
+        }
+    }
+
+    private fun saveLocalTasks(list: List<TaskItem>) {
+        try {
+            val array = JSONArray()
+            for (item in list) {
+                val obj = JSONObject().apply {
+                    put("id", item.id)
+                    put("title", item.title)
+                    put("isCompleted", item.isCompleted)
+                    put("category", item.category)
+                    put("timestamp", item.timestamp)
+                }
+                array.put(obj)
+            }
+            prefs.edit().putString("saved_tasks", array.toString()).apply()
+        } catch (e: Exception) {
+            Log.e("TaskManager", "Error saving local tasks", e)
+        }
+    }
+
+    private fun listenToFirestore() {
+        try {
+            collection?.addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.w("TaskManager", "Firestore tasks listener error", error)
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    val list = mutableListOf<TaskItem>()
+                    for (doc in snapshot.documents) {
+                        val id = doc.getString("id") ?: doc.id
+                        val title = doc.getString("title") ?: ""
+                        val isCompleted = doc.getBoolean("isCompleted") ?: false
+                        val category = doc.getString("category") ?: "Genel"
+                        val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
+                        if (title.isNotBlank()) {
+                            list.add(TaskItem(id = id, title = title, isCompleted = isCompleted, category = category, timestamp = timestamp))
+                        }
+                    }
+                    val sorted = list.sortedByDescending { it.timestamp }
+                    _tasks.value = sorted
+                    saveLocalTasks(sorted)
+                }
+            }
+        } catch (e: Throwable) {
+            Log.e("TaskManager", "Failed to register Firestore listener", e)
         }
     }
 
@@ -43,31 +99,65 @@ class TaskManager(context: Context) {
         if (trimmed.isBlank()) return
         val id = java.util.UUID.randomUUID().toString()
         val item = TaskItem(id = id, title = trimmed, isCompleted = false, category = category, timestamp = System.currentTimeMillis())
-        collection.document(id).set(
-            mapOf(
-                "id" to item.id,
-                "title" to item.title,
-                "isCompleted" to item.isCompleted,
-                "category" to item.category,
-                "timestamp" to item.timestamp
+        
+        val current = _tasks.value.toMutableList()
+        current.add(0, item)
+        _tasks.value = current
+        saveLocalTasks(current)
+
+        try {
+            collection?.document(id)?.set(
+                mapOf(
+                    "id" to item.id,
+                    "title" to item.title,
+                    "isCompleted" to item.isCompleted,
+                    "category" to item.category,
+                    "timestamp" to item.timestamp
+                )
             )
-        )
+        } catch (e: Throwable) {
+            Log.e("TaskManager", "Error writing task to Firestore", e)
+        }
     }
 
     fun toggleTask(id: String) {
-        val currentTask = _tasks.value.find { it.id == id } ?: return
-        val newStatus = !currentTask.isCompleted
-        collection.document(id).update("isCompleted", newStatus)
+        val current = _tasks.value.toMutableList()
+        val index = current.indexOfFirst { it.id == id }
+        if (index != -1) {
+            val updated = current[index].copy(isCompleted = !current[index].isCompleted)
+            current[index] = updated
+            _tasks.value = current
+            saveLocalTasks(current)
+            try {
+                collection?.document(id)?.update("isCompleted", updated.isCompleted)
+            } catch (e: Throwable) {
+                Log.e("TaskManager", "Error updating task in Firestore", e)
+            }
+        }
     }
 
     fun deleteTask(id: String) {
-        collection.document(id).delete()
+        val current = _tasks.value.filter { it.id != id }
+        _tasks.value = current
+        saveLocalTasks(current)
+        try {
+            collection?.document(id)?.delete()
+        } catch (e: Throwable) {
+            Log.e("TaskManager", "Error deleting task from Firestore", e)
+        }
     }
 
     fun clearCompleted() {
+        val remaining = _tasks.value.filter { !it.isCompleted }
         val completed = _tasks.value.filter { it.isCompleted }
-        completed.forEach { task ->
-            collection.document(task.id).delete()
+        _tasks.value = remaining
+        saveLocalTasks(remaining)
+        try {
+            completed.forEach { task ->
+                collection?.document(task.id)?.delete()
+            }
+        } catch (e: Throwable) {
+            Log.e("TaskManager", "Error clearing completed tasks from Firestore", e)
         }
     }
 
