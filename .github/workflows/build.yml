@@ -37,10 +37,11 @@ jobs:
             -storepass android \
             -keypass android \
             -dname "CN=NoroAI, OU=Mobile, O=WeroStudios, L=Istanbul, ST=Istanbul, C=TR"
+          cp my-upload-key.jks app/my-upload-key.jks
 
       - name: Build Signed Release APK
         env:
-          KEYSTORE_PATH: my-upload-key.jks
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
           STORE_PASSWORD: android
           KEY_PASSWORD: android
         run: ./gradlew assembleRelease --stacktrace
