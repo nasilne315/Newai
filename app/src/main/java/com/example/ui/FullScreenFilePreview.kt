@@ -388,7 +388,8 @@ fun FullScreenFilePreview(
                                         builtInZoomControls = true
                                         displayZoomControls = false
                                         loadWithOverviewMode = true
-                                        useWideViewPort = false
+                                        useWideViewPort = true
+                                        setSupportZoom(true)
                                     }
                                     loadDataWithBaseURL(null, darkHtml, "text/html", "UTF-8", null)
                                 }

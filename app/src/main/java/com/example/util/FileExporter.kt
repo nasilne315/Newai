@@ -236,7 +236,7 @@ object FileExporter {
 
     fun prepareDarkHtml(rawHtml: String): String {
         val darkReset = """
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
             <meta name="color-scheme" content="dark light">
             <style id="app-dark-theme-reset">
                 :root {
@@ -247,6 +247,8 @@ object FileExporter {
                     color: #e2e8f0;
                     margin: 0;
                     padding: 0;
+                    overflow: auto;
+                    -webkit-overflow-scrolling: touch;
                 }
                 body {
                     background-color: #141518;
@@ -255,7 +257,7 @@ object FileExporter {
                     padding: 16px;
                     box-sizing: border-box;
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                    overflow-y: auto;
+                    overflow: auto;
                     -webkit-overflow-scrolling: touch;
                 }
             </style>
@@ -263,12 +265,12 @@ object FileExporter {
 
         val safeReset = if (rawHtml.contains("background-color", ignoreCase = true) || rawHtml.contains("background:", ignoreCase = true)) {
             """
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
             <meta name="color-scheme" content="dark light">
             <style id="app-dark-theme-reset">
                 :root { color-scheme: dark; }
-                html { background-color: #141518; color: #e2e8f0; }
-                body { box-sizing: border-box; padding-top: 12px; }
+                html { background-color: #141518; color: #e2e8f0; overflow: auto; }
+                body { box-sizing: border-box; padding-top: 12px; overflow: auto; }
             </style>
             """.trimIndent()
         } else {
