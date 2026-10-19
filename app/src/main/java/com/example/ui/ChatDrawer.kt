@@ -57,12 +57,9 @@ import com.example.ui.theme.TextSecondary
 
 @Composable
 fun ChatDrawerContent(
-    activePersona: AssistantPersona,
     chatSessions: List<ChatSession>,
     currentSessionId: String,
-    onOpenPersonaDialog: () -> Unit,
     onOpenMemoryDialog: () -> Unit,
-    onOpenTasksDialog: () -> Unit,
     onSelectSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
     onNewChat: () -> Unit,
@@ -112,7 +109,7 @@ fun ChatDrawerContent(
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = "Kişisel Asistan",
+                            text = "Lynia",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 17.sp
@@ -175,46 +172,8 @@ fun ChatDrawerContent(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Quick Features: Persona, Memory, Tasks
+            // Quick Features: Memory & Rules
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                // Active Persona
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = DarkSurface,
-                    border = BorderStroke(1.dp, DarkBorder),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable {
-                            onOpenPersonaDialog()
-                            onCloseDrawer()
-                        }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.AutoAwesome,
-                            contentDescription = null,
-                            tint = Color(0xFF60A5FA),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "Mod: ${activePersona.title}",
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                            color = TextPrimary,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            text = "Değiştir",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SendButtonDarkBlue
-                        )
-                    }
-                }
-
                 // Personal Memory
                 Surface(
                     shape = RoundedCornerShape(12.dp),
@@ -240,39 +199,7 @@ fun ChatDrawerContent(
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "Kişisel Hafıza (Beni Hatırla)",
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                            color = TextPrimary
-                        )
-                    }
-                }
-
-                // Tasks & To-Dos
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = DarkSurface,
-                    border = BorderStroke(1.dp, DarkBorder),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable {
-                            onOpenTasksDialog()
-                            onCloseDrawer()
-                        }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.PlaylistAddCheck,
-                            contentDescription = null,
-                            tint = Color(0xFFFBBF24),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "Görevler & Ajanda",
+                            text = "Kişisel Hafıza & Kurallar",
                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                             color = TextPrimary
                         )

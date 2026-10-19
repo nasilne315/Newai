@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+import com.example.model.RuleItem
+
 data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val inputText: String = "",
@@ -38,6 +40,7 @@ data class ChatUiState(
     val isPersonaDialogOpen: Boolean = false,
     val isMemoryDialogOpen: Boolean = false,
     val isTasksDialogOpen: Boolean = false,
+    val isWebSearchEnabled: Boolean = true,
     val currentSessionId: String = java.util.UUID.randomUUID().toString(),
     val errorMessage: String? = null,
     val infoNotice: String? = null
@@ -55,6 +58,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val apiKeyStatus: StateFlow<ApiKeyStatus> = repository.apiKeyManager.status
     val chatSessions: StateFlow<List<ChatSession>> = chatHistoryManager.sessions
     val memories: StateFlow<List<MemoryItem>> = memoryManager.memories
+    val rules: StateFlow<List<RuleItem>> = memoryManager.rules
     val tasks: StateFlow<List<TaskItem>> = taskManager.tasks
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -131,6 +135,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearMemories() {
         memoryManager.clearMemories()
+    }
+
+    fun addRule(content: String): Boolean {
+        return memoryManager.addRule(content)
+    }
+
+    fun removeRule(id: String) {
+        memoryManager.removeRule(id)
+    }
+
+    fun clearRules() {
+        memoryManager.clearRules()
+    }
+
+    fun toggleWebSearch() {
+        _uiState.update { it.copy(isWebSearchEnabled = !it.isWebSearchEnabled) }
     }
 
     fun addTask(title: String, category: String) {
@@ -291,7 +311,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 userPrompt = text,
                 attachedFile = attachedFile,
                 conversationHistory = currentState.messages + userMessage,
-                persona = currentState.activePersona
+                persona = currentState.activePersona,
+                isWebSearchEnabled = currentState.isWebSearchEnabled
             ).collect { streamUpdate ->
                 if (streamUpdate.error != null) {
                     _uiState.update { state ->

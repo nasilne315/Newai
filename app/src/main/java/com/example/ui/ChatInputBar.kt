@@ -34,6 +34,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.AttachFile
+import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -47,6 +48,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -89,6 +93,39 @@ fun ChatInputBar(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+
+    var tempCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture(),
+        onResult = { success ->
+            val currentUri = tempCameraUri
+            if (success && currentUri != null) {
+                val file = FileUtils.getAttachedFile(context, currentUri)
+                onAttachFile(file)
+            }
+        }
+    )
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { isGranted ->
+            if (isGranted) {
+                try {
+                    val photoFile = java.io.File.createTempFile("camera_photo_", ".jpg", context.cacheDir)
+                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        photoFile
+                    )
+                    tempCameraUri = uri
+                    cameraLauncher.launch(uri)
+                } catch (e: Exception) {
+                    // ignore
+                }
+            }
+        }
+    )
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -266,12 +303,13 @@ fun ChatInputBar(
                 BasicTextField(
                     value = inputText,
                     onValueChange = onInputTextChanged,
+                    enabled = !isLoading,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp)
                         .testTag("chat_input_text_field"),
                     textStyle = TextStyle(
-                        color = TextPrimary,
+                        color = if (!isLoading) TextPrimary else TextSecondary,
                         fontSize = 16.sp,
                         lineHeight = 22.sp
                     ),
@@ -280,10 +318,10 @@ fun ChatInputBar(
                     decorationBox = { innerTextField ->
                         if (inputText.isEmpty() && !isRecordingVoice) {
                             Text(
-                                text = "Bir mesaj yazın veya sesli konuşun...",
+                                text = if (isLoading) "Yapay zeka yanıtlıyor, lütfen bekleyin..." else "Bir mesaj yazın veya sesli konuşun...",
                                 style = TextStyle(
-                                    color = TextMuted,
-                                    fontSize = 16.sp
+                                    color = if (isLoading) TextSecondary.copy(alpha = 0.6f) else TextMuted,
+                                    fontSize = 15.sp
                                 )
                             )
                         }
@@ -298,20 +336,59 @@ fun ChatInputBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    IconButton(
-                        onClick = {
-                            filePickerLauncher.launch("*/*")
-                        },
-                        modifier = Modifier
-                            .size(36.dp)
-                            .testTag("attach_file_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.AttachFile,
-                            contentDescription = "Dosya ekle (PDF, görsel, metin vb.)",
-                            tint = TextSecondary,
-                            modifier = Modifier.size(20.dp)
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = {
+                                filePickerLauncher.launch("*/*")
+                            },
+                            enabled = !isLoading,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .testTag("attach_file_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.AttachFile,
+                                contentDescription = "Dosya ekle",
+                                tint = if (!isLoading) TextSecondary else TextMuted,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                val hasCameraPermission = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.CAMERA
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (hasCameraPermission) {
+                                    try {
+                                        val photoFile = java.io.File.createTempFile("camera_photo_", ".jpg", context.cacheDir)
+                                        val uri = androidx.core.content.FileProvider.getUriForFile(
+                                            context,
+                                            "${context.packageName}.fileprovider",
+                                            photoFile
+                                        )
+                                        tempCameraUri = uri
+                                        cameraLauncher.launch(uri)
+                                    } catch (e: Exception) {
+                                        // ignore
+                                    }
+                                } else {
+                                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                }
+                            },
+                            enabled = !isLoading,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .testTag("camera_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.CameraAlt,
+                                contentDescription = "Fotoğraf çek",
+                                tint = if (!isLoading) TextSecondary else TextMuted,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
 
                     Row(
@@ -329,6 +406,7 @@ fun ChatInputBar(
                                     permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 }
                             },
+                            enabled = !isLoading,
                             modifier = Modifier
                                 .size(36.dp)
                                 .scale(micScale)

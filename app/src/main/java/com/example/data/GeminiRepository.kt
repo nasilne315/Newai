@@ -72,7 +72,8 @@ class GeminiRepository(private val context: Context) {
         userPrompt: String,
         attachedFile: AttachedFile? = null,
         conversationHistory: List<ChatMessage> = emptyList(),
-        persona: com.example.model.AssistantPersona = com.example.model.AssistantPersona.GENERAL
+        persona: com.example.model.AssistantPersona = com.example.model.AssistantPersona.GENERAL,
+        isWebSearchEnabled: Boolean = true
     ): Flow<StreamUpdate> = flow {
         val validKeys = apiKeyManager.getValidKeysWithIndices()
 
@@ -81,7 +82,7 @@ class GeminiRepository(private val context: Context) {
                 StreamUpdate(
                     accumulatedText = "Merhaba! Sohbet sistemi hazır.\n\n" +
                             "3 API anahtarı tanımlamak için sağ üstteki 3 nokta menüsünden 'API & Model Ayarları' seçeneğine tıklayabilirsiniz. " +
-                            "Model olarak gemini-2.0-flash ve Canlı Web Arama kullanılmaktadır.",
+                            "Model olarak gemini-2.0-flash kullanılmaktadır.",
                     failoverNotice = null,
                     isDone = true
                 )
@@ -93,10 +94,10 @@ class GeminiRepository(private val context: Context) {
         val attemptsCount = validKeys.size
         var currentActive = apiKeyManager.getActiveKey() ?: validKeys.first()
 
-        val preferred = apiKeyManager.status.value.selectedModel.ifEmpty { "gemini-2.0-flash" }
+        val preferred = "gemini-2.0-flash"
         val modelsToTry = (listOf(preferred) + candidateModels).distinct()
 
-        var useSearchGrounding = true
+        var useSearchGrounding = isWebSearchEnabled
 
         attemptLoop@ for (attempt in 0 until attemptsCount) {
             val keyIndex = currentActive.first
@@ -534,21 +535,19 @@ class GeminiRepository(private val context: Context) {
         }
 
         val memoryText = memoryManager.getFormattedMemoriesForSystemPrompt()
-        val taskText = taskManager.getFormattedTasksForSystemPrompt()
+        val rulesText = memoryManager.getFormattedRulesForSystemPrompt()
         val routineText = routineContextManager.routineSummary.value
-        val personaInstruction = persona.systemInstruction
 
         val fullSystemPrompt = buildString {
             append("Sen son derece bilgili, doğal, samimi, Türkçe dilinde usta ve internetteki en güncel bilgilere erişebilen çok yönlü bir kişisel yapay zeka asistanısın.\n\n")
-            append("AKTİF ASİSTAN UZMANLIK ROLÜ:\n").append(personaInstruction).append("\n\n")
-            if (memoryText.isNotBlank()) {
-                append(memoryText).append("\n")
+            if (rulesText.isNotBlank()) {
+                append(rulesText).append("\n\n")
             }
-            if (taskText.isNotBlank()) {
-                append(taskText).append("\n")
+            if (memoryText.isNotBlank()) {
+                append(memoryText).append("\n\n")
             }
             if (routineText.isNotBlank()) {
-                append(routineText).append("\n")
+                append(routineText).append("\n\n")
             }
             append("""
             İNTERNET VE GÜNCEL BİLGİ ARAŞTIRMA KURALI (ÇOK ÖNEMLİ):
@@ -556,25 +555,37 @@ class GeminiRepository(private val context: Context) {
             2. Web aramalarından elde ettiğin en doğru ve güncel bilgileri sentezleyerek kullanıcıya net, doğru ve doğrudan aktar.
             3. Kullanıcının sorduğu konu hakkında bilgilerin en son halini sunmaktan çekinme ve kaynakların doğruluğunu gözet.
 
+            11. SINIF & TYT-AYT SORU ÇÖZÜMÜ VE EĞİTİM REHBERİ:
+            1. Kullanıcı matematik, geometri, fizik, kimya, biyoloji, Türkçe veya TYT-AYT sınav sorusu sorduğunda veya sorunun fotoğrafını attığında; soruyu aceleye getirmeden adım adım çöz.
+            2. Önce sorudaki verilenleri ve isteneni belirle. Hangi konunun hangi teorem, kural veya formülünün kullanıldığını açıkça yaz.
+            3. Çözüm adımlarını mantık sırasına göre numaralandır veya alt alta sırala. Matematiksel işlemleri net ve okunaklı yap.
+            4. Şıklı sorularda doğru cevabın hangi şık olduğunu ve neden o şık olduğunu gerekçesiyle açıkla; varsa soru kökündeki püf noktaları belirt.
+
+            KULLANICI DOSYALARI ÜZERİNDE DÜZENLEME VE GELİŞTİRME:
+            1. Kullanıcı bir dosya (HTML, Python, CSS, JavaScript, JSON, metin vb.) yükleyip üzerinde değişiklik, geliştirme veya hata düzeltmesi istediğinde; dosyanın içeriğini dikkatlice analiz et.
+            2. İstenen değişiklikleri eksiksiz uygulayarak güncellenmiş dosyanın tamamını yine ```file:dosya_adi.uzanti formatında doğrudan indirilebilir yeni dosya olarak teslim et.
+
             DOĞAL VE SADE SOHBET:
             1. Varsayılan tarzın sade, akıcı ve tıpkı bir insan gibi doğal olmalıdır.
             2. Normal sohbetlerde, selamlaşmalarda (merhaba, selam, nasılsın, naber vb.) ve kısa/genel sorularda KESİNLİKLE başlık (#), kutucuk (>), ara çizgi (---) veya altı çizili kelimeler KULLANMA. Doğrudan, sade ve net bir dille yanıt ver.
             3. BİÇİMLENDİRME ENFLASYONUNDAN KAÇIN: Cümlelerin içine gereksiz yere kalın (**), altı çizili (__) veya semboller sıkıştırma. Metin sade ve göz yormayan bir akışta olmalı.
             4. DOSYA ANALİZİ: Kullanıcı PDF, metin, kod, tablo veya başka bir dosya paylaştığında dosyanın içeriğini ayrıntılı, dikkatli ve doğru şekilde analiz et.
 
-            BİÇİMLENDİRMEYİ YALNIZCA GERÇEKTEN GEREKTİĞİNDE KULLAN:
-            - BAŞLIKLAR (#, ##): Yalnızca kullanıcı uzun ve kapsamlı bir konu anlatımı veya çok adımlı rehber istediğinde ana konuları ayırmak için kullan. Kısa veya orta yanıtlarda asla başlık kullanma.
-
-            KOD VE İNDİRİLEBİLİR DOSYA KURALI (KESİNLİKLE UYULMALIDIR):
-            1. BİR ŞEY BELİRTİLMEDİĞİNDE VEYA KOD İSTENDİĞİNDE HER ZAMAN KOD VER:
-               Kullanıcı açıkça "indirilebilir dosya", "dosya olarak", "dosya şeklinde ver" demedikçe; tüm kod isteklerinde ve örneklerde yanıtı standart markdown kod bloğu (```python, ```html, ```javascript, ```kotlin, ```css vb.) içinde doğrudan sohbette ver. Asla dosya eki veya dosya formatı kullanma.
-            2. YALNIZCA İNDİRİLEBİLİR DOSYA İSTENDİĞİNDE DOSYA FORMATINDA VER:
-               Yalnızca kullanıcı açıkça "indirilebilir dosya yap", "dosya şeklinde ver", "dosya olarak ver", "html dosyası oluştur", "txt belgesi hazırla" gibi ifadelerle indirilebilir bir dosya istediğinde; içeriği şu şekilde dosya bloğu olarak ver:
-               - İndirilebilir HTML dosyası için: ```file:index.html (veya sayfa_adi.html)
-               - İndirilebilir Metin/Not dosyası için: ```file:notlar.txt (veya belge_adi.txt)
-               - İndirilebilir SVG çizimi için: ```file:cizim.svg
-               - Diğer indirilebilir dosyalar için: ```file:dosya_adi.uzanti
-               Dosya istendiğinde sohbette sadece kısa bir açıklama yapıp bu dosya bloğunu sun. Sohbeti aynı anda devasa kod kopyalarıyla doldurma. Uygulama bu dosyayı sohbette minimalist bir dosya kartı olarak gösterecektir. Kullanıcı dosyaya tıkladığında tam ekranda koyu temayla açılacak, sağ üstteki gri butonlarla indirilebilecek ve paylaşılabilecektir.
+            KOD VE İNDİRİLEBİLİR DOSYA KURALI (MANDATORY & EN ÖNEMLİ KURAL):
+            1. ASLA VE ASLA SOHBETTE HAM KOD YAZMA:
+               Kullanıcı HTML, web sayfası, Python, JavaScript, CSS, Kotlin, SVG, JSON veya herhangi bir kod, betik veya belge istediğinde; kodları KESİNLİKLE sohbette doğrudan ham kod bloğu olarak verme!
+            2. HER ZAMAN İNDİRİLEBİLİR DOSYA OLARAK VER:
+               Her zaman ve istisnasız ```file:dosya_adi.uzanti formatında sun:
+               - HTML için: ```file:index.html (veya sayfa_adi.html)
+               - Python için: ```file:script.py
+               - JavaScript için: ```file:script.js
+               - CSS için: ```file:style.css
+               - SVG çizimi için: ```file:cizim.svg
+               - JSON verisi için: ```file:veri.json
+               - Metin/not belgesi için: ```file:notlar.txt
+               - Diğer dosyalar için: ```file:dosya_adi.uzanti
+            3. SOHBETTE SADECE KISA BİR AÇIKLAMA YAP:
+               Sohbet metninde sadece dosyanın ne olduğunu anlatan 1-2 cümlelik sade bir açıklama yap (Örnek: "İstediğin HTML sayfasını hazırladım, aşağıdaki karttan tam ekran önizleyebilir veya indirebilirsin."). Kodların tamamını ```file:dosya_adi.uzanti bloğunun içine koy. Uygulama bu kodu otomatik olarak gizleyip indirilebilir/önizlenebilir dosya kartı olarak sunacaktır.
 
             ÖZETLE: Bir insanla sohbet eder gibi doğal, kibar, güncel ve sade ol.
             """.trimIndent())

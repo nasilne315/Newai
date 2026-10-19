@@ -61,14 +61,7 @@ fun ApiKeyDialog(
     var key1 by remember { mutableStateOf(status.key1) }
     var key2 by remember { mutableStateOf(status.key2) }
     var key3 by remember { mutableStateOf(status.key3) }
-    var selectedModel by remember { mutableStateOf(status.selectedModel) }
-
-    val modelOptions = listOf(
-        "gemini-2.0-flash" to "2.0 Flash (Hızlı)",
-        "gemini-1.5-flash" to "1.5 Flash (Kararlı)",
-        "gemini-2.5-flash" to "2.5 Flash",
-        "gemini-2.0-flash-exp" to "2.0 Flash Exp"
-    )
+    val selectedModel = "gemini-2.0-flash"
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -93,12 +86,12 @@ fun ApiKeyDialog(
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
-                        text = "API & Model Ayarları",
+                        text = "API Anahtarı Ayarları",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                         color = TextPrimary
                     )
                     Text(
-                        text = "Aktif Model: $selectedModel",
+                        text = "Gemini 2.0 Flash • Otomatik Havuz",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFF60A5FA)
                     )
@@ -113,76 +106,11 @@ fun ApiKeyDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "3 API anahtarı havuzu (429'da otomatik devir). 404 durumunda otomatik alternatif model denenir.",
+                    text = "3 API anahtarı havuzu (429 rate-limit durumunda otomatik devir).",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextMuted,
                     lineHeight = 16.sp
                 )
-
-                // Model Selection Chips
-                Text(
-                    text = "Model Seçimi:",
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                    color = TextSecondary
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    modelOptions.take(2).forEach { (modelId, label) ->
-                        val isSelected = selectedModel == modelId
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (isSelected) Color(0xFF1E3A5F) else DarkSurfaceVariant,
-                            border = BorderStroke(1.dp, if (isSelected) Color(0xFF60A5FA) else DarkBorder),
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { selectedModel = modelId }
-                        ) {
-                            Box(
-                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = label,
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) Color(0xFF93C5FD) else TextSecondary
-                                )
-                            }
-                        }
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    modelOptions.drop(2).forEach { (modelId, label) ->
-                        val isSelected = selectedModel == modelId
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (isSelected) Color(0xFF1E3A5F) else DarkSurfaceVariant,
-                            border = BorderStroke(1.dp, if (isSelected) Color(0xFF60A5FA) else DarkBorder),
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { selectedModel = modelId }
-                        ) {
-                            Box(
-                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = label,
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) Color(0xFF93C5FD) else TextSecondary
-                                )
-                            }
-                        }
-                    }
-                }
 
                 Spacer(modifier = Modifier.height(4.dp))
 

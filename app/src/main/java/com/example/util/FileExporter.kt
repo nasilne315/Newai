@@ -103,13 +103,8 @@ object FileExporter {
 
     /**
      * Extracts files from message text.
-     * When the user doesn't ask for a file, regular code blocks (```python, ```html, ```js) remain as CODE.
-     * When a downloadable file is explicitly intended:
-     * - ```file:filename.ext
-     * - ```lang:filename.ext (e.g. ```html:index.html, ```txt:notlar.txt)
-     * - ```download:filename.ext
-     * - ```file
-     * - Or when markdown explicitly indicates a downloadable file
+     * Every HTML, code, SVG, script, or document is extracted as a downloadable file,
+     * ensuring users always receive files instead of raw code blocks.
      */
     fun extractGeneratedFiles(markdownText: String): List<GeneratedFile> {
         val files = mutableListOf<GeneratedFile>()
@@ -117,19 +112,13 @@ object FileExporter {
         val matches = regex.findAll(markdownText)
         var fileCount = 1
 
-        val hasFileIntent = markdownText.contains("indirilebilir", ignoreCase = true) ||
-                markdownText.contains("dosya şeklinde", ignoreCase = true) ||
-                markdownText.contains("dosya olarak", ignoreCase = true) ||
-                markdownText.contains("dosyası:", ignoreCase = true) ||
-                markdownText.contains("dosyası oluşturdum", ignoreCase = true)
-
         for (match in matches) {
             val tag = match.groupValues[1].lowercase().trim()
             val explicitName = match.groupValues[2].trim()
             val code = match.groupValues[3].trim()
             if (code.isBlank()) continue
 
-            // 1. Explicit filename given in fence: ```file:index.html, ```html:sayfa.html, ```txt:notlar.txt
+            // 1. Explicit filename given: ```file:index.html, ```html:sayfa.html
             if (explicitName.isNotBlank()) {
                 val ext = explicitName.substringAfterLast('.', tag).ifBlank { tag }
                 files.add(
@@ -142,50 +131,79 @@ object FileExporter {
                 continue
             }
 
-            // 2. Explicit file block: ```file or ```download
+            // 2. Explicit file/download tag
             if (tag == "file" || tag == "download") {
-                val ext = if (code.contains("<html", ignoreCase = true)) "html" else "txt"
-                val name = if (ext == "html") "index.html" else "dosya_$fileCount.txt"
+                val ext = when {
+                    code.contains("<html", ignoreCase = true) -> "html"
+                    code.contains("<svg", ignoreCase = true) -> "svg"
+                    code.startsWith("{") || code.startsWith("[") -> "json"
+                    else -> "txt"
+                }
+                val name = if (ext == "html") "index.html" else "dosya_$fileCount.$ext"
                 files.add(GeneratedFile(fileName = name, fileExtension = ext, content = code))
                 fileCount++
                 continue
             }
 
-            // 3. If surrounding text explicitly requested/indicated a downloadable file
-            if (hasFileIntent) {
-                when (tag) {
-                    "html", "htm" -> {
-                        val name = if (fileCount == 1) "index.html" else "sayfa_$fileCount.html"
-                        files.add(GeneratedFile(fileName = name, fileExtension = "html", content = code))
-                        fileCount++
-                    }
-                    "svg" -> {
-                        val name = if (fileCount == 1) "cizim.svg" else "cizim_$fileCount.svg"
-                        files.add(GeneratedFile(fileName = name, fileExtension = "svg", content = code))
-                        fileCount++
-                    }
-                    "txt", "text" -> {
-                        val name = if (fileCount == 1) "notlar.txt" else "belge_$fileCount.txt"
-                        files.add(GeneratedFile(fileName = name, fileExtension = "txt", content = code))
-                        fileCount++
-                    }
-                }
+            // 3. Any standard code or markup block -> ALWAYS convert to downloadable file
+            val (name, ext) = when (tag) {
+                "html", "htm" -> (if (fileCount == 1) "index.html" else "sayfa_$fileCount.html") to "html"
+                "svg" -> (if (fileCount == 1) "cizim.svg" else "cizim_$fileCount.svg") to "svg"
+                "py", "python" -> (if (fileCount == 1) "script.py" else "script_$fileCount.py") to "py"
+                "js", "javascript" -> (if (fileCount == 1) "script.js" else "script_$fileCount.js") to "js"
+                "css" -> (if (fileCount == 1) "style.css" else "style_$fileCount.css") to "css"
+                "json" -> (if (fileCount == 1) "data.json" else "data_$fileCount.json") to "json"
+                "kt", "kotlin" -> (if (fileCount == 1) "Main.kt" else "Main_$fileCount.kt") to "kt"
+                "txt", "text" -> (if (fileCount == 1) "notlar.txt" else "belge_$fileCount.txt") to "txt"
+                else -> (if (tag.length in 2..5) "dosya_$fileCount.$tag" to tag else "dosya_$fileCount.txt" to "txt")
             }
-            // Otherwise, regular code snippets (HTML, Python, Kotlin, JS, etc.) remain as pure code in chat!
+            files.add(GeneratedFile(fileName = name, fileExtension = ext, content = code))
+            fileCount++
         }
         return files
     }
 
     /**
-     * Strips file code blocks from the chat message text so that when a file is provided,
-     * the chat doesn't display both the huge code block and the file card simultaneously.
+     * Detects if a code or file block is currently being streamed (an unclosed ``` fence exists).
+     * Returns the name of the file being generated, or null if no file is being generated.
      */
-    fun stripFileCodeBlocks(markdownText: String, files: List<GeneratedFile>): String {
-        if (files.isEmpty()) return markdownText
+    fun getGeneratingFileName(text: String): String? {
+        val openFenceIndex = text.lastIndexOf("```")
+        if (openFenceIndex != -1) {
+            val afterFence = text.substring(openFenceIndex + 3)
+            // If there's no closing fence after this open fence, it is actively generating
+            if (!afterFence.contains("```")) {
+                val header = afterFence.lines().firstOrNull()?.trim() ?: ""
+                val fileName = when {
+                    header.startsWith("file:", ignoreCase = true) -> header.substringAfter("file:").trim()
+                    header.startsWith("download:", ignoreCase = true) -> header.substringAfter("download:").trim()
+                    header.contains(":") -> header.substringAfter(":").trim()
+                    header.equals("html", ignoreCase = true) || header.equals("htm", ignoreCase = true) -> "index.html"
+                    header.equals("svg", ignoreCase = true) -> "cizim.svg"
+                    header.equals("py", ignoreCase = true) || header.equals("python", ignoreCase = true) -> "script.py"
+                    header.equals("kt", ignoreCase = true) || header.equals("kotlin", ignoreCase = true) -> "Main.kt"
+                    header.equals("js", ignoreCase = true) || header.equals("javascript", ignoreCase = true) -> "script.js"
+                    header.equals("css", ignoreCase = true) -> "style.css"
+                    header.equals("json", ignoreCase = true) -> "data.json"
+                    header.equals("txt", ignoreCase = true) || header.equals("text", ignoreCase = true) -> "belge.txt"
+                    header.isNotBlank() && !header.contains(" ") -> "dosya.$header"
+                    else -> "dosya.html"
+                }
+                return fileName.ifBlank { "dosya.html" }
+            }
+        }
+        return null
+    }
 
+    /**
+     * Strips file code blocks from the chat message text so raw code is NEVER displayed in the chat bubble.
+     * If streaming, it also hides the actively generating unclosed code block completely.
+     */
+    fun stripFileCodeBlocks(markdownText: String, files: List<GeneratedFile>, isStreaming: Boolean = false): String {
         var result = markdownText
         val regex = Regex("""```([a-zA-Z0-9_\-\.]+)(?::([a-zA-Z0-9_\-\.]+))?\s*([\s\S]*?)```""")
 
+        // 1. Strip completed code blocks
         result = regex.replace(result) { matchResult ->
             val tag = matchResult.groupValues[1].lowercase().trim()
             val explicitName = matchResult.groupValues[2].trim()
@@ -195,20 +213,27 @@ object FileExporter {
                 file.content.trim() == code || (explicitName.isNotBlank() && file.fileName.equals(explicitName, ignoreCase = true))
             }
 
-            if (isExtracted) {
-                "" // Strip this code block from the message body
+            if (isExtracted || tag in listOf("file", "download", "html", "htm", "svg", "css", "js", "javascript", "python", "py", "kotlin", "kt", "json", "txt", "text")) {
+                "" // Strip all code blocks completely
             } else {
-                matchResult.value // Keep regular code blocks in chat
+                matchResult.value
+            }
+        }
+
+        // 2. If actively streaming, strip the unclosed code block so raw code is hidden while being generated
+        if (isStreaming) {
+            val openFenceIndex = result.lastIndexOf("```")
+            if (openFenceIndex != -1) {
+                val afterFence = result.substring(openFenceIndex + 3)
+                if (!afterFence.contains("```")) {
+                    result = result.substring(0, openFenceIndex).trimEnd()
+                }
             }
         }
 
         return result.replace(Regex("""\n{3,}"""), "\n\n").trim()
     }
 
-    /**
-     * Injects dark mode meta tags, viewport, and styling into HTML if it doesn't already have dark styles,
-     * ensuring the live preview is consistent with the app's dark theme and scrolls properly.
-     */
     fun prepareDarkHtml(rawHtml: String): String {
         val darkReset = """
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes">
@@ -236,7 +261,6 @@ object FileExporter {
             </style>
         """.trimIndent()
 
-        // If the HTML already defines its own explicit background color, don't force background on body
         val safeReset = if (rawHtml.contains("background-color", ignoreCase = true) || rawHtml.contains("background:", ignoreCase = true)) {
             """
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes">

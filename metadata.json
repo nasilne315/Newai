@@ -1,6 +1,6 @@
 {
-  "name": "Noro AI",
-  "description": "Noro AI - Kişisel Yapay Zeka Asistanı ve Rutin Planlayıcı",
+  "name": "Lynia",
+  "description": "Lynia - Kişisel Yapay Zeka Asistanı",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

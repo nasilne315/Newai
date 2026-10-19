@@ -97,7 +97,7 @@ fun ChatScreen(
     var previewFile by remember { mutableStateOf<GeneratedFile?>(null) }
 
     // Handle back button
-    BackHandler(enabled = previewFile != null || drawerState.isOpen || uiState.isApiKeyDialogOpen || uiState.isPersonaDialogOpen || uiState.isMemoryDialogOpen || uiState.isTasksDialogOpen) {
+    BackHandler(enabled = previewFile != null || drawerState.isOpen || uiState.isApiKeyDialogOpen || uiState.isMemoryDialogOpen) {
         if (previewFile != null) {
             previewFile = null
         } else if (drawerState.isOpen) {
@@ -105,12 +105,8 @@ fun ChatScreen(
             viewModel.setDrawerOpen(false)
         } else if (uiState.isApiKeyDialogOpen) {
             viewModel.setApiKeyDialogOpen(false)
-        } else if (uiState.isPersonaDialogOpen) {
-            viewModel.setPersonaDialogOpen(false)
         } else if (uiState.isMemoryDialogOpen) {
             viewModel.setMemoryDialogOpen(false)
-        } else if (uiState.isTasksDialogOpen) {
-            viewModel.setTasksDialogOpen(false)
         }
     }
 
@@ -123,12 +119,9 @@ fun ChatScreen(
             drawerState = drawerState,
             drawerContent = {
                 ChatDrawerContent(
-                    activePersona = uiState.activePersona,
                     chatSessions = chatSessions,
                     currentSessionId = uiState.currentSessionId,
-                    onOpenPersonaDialog = { viewModel.setPersonaDialogOpen(true) },
                     onOpenMemoryDialog = { viewModel.setMemoryDialogOpen(true) },
-                    onOpenTasksDialog = { viewModel.setTasksDialogOpen(true) },
                     onSelectSession = { viewModel.selectSession(it) },
                     onDeleteSession = { viewModel.deleteSession(it) },
                     onNewChat = { viewModel.startNewChat() },
@@ -240,19 +233,6 @@ fun ChatScreen(
             )
         }
 
-        // Persona Selector Dialog
-        if (uiState.isPersonaDialogOpen) {
-            PersonaSelectorDialog(
-                currentPersona = uiState.activePersona,
-                onSelectPersona = { persona ->
-                    viewModel.setPersona(persona)
-                },
-                onDismiss = {
-                    viewModel.setPersonaDialogOpen(false)
-                }
-            )
-        }
-
         // Personal Memory Management Dialog
         if (uiState.isMemoryDialogOpen) {
             MemoryDialog(
@@ -268,31 +248,6 @@ fun ChatScreen(
                 },
                 onDismiss = {
                     viewModel.setMemoryDialogOpen(false)
-                }
-            )
-        }
-
-        // Tasks & To-Do Management Dialog
-        if (uiState.isTasksDialogOpen) {
-            TasksDialog(
-                tasks = tasks,
-                onAddTask = { title, category ->
-                    viewModel.addTask(title, category)
-                },
-                onToggleTask = { id ->
-                    viewModel.toggleTask(id)
-                },
-                onDeleteTask = { id ->
-                    viewModel.deleteTask(id)
-                },
-                onClearCompleted = {
-                    viewModel.clearCompletedTasks()
-                },
-                onAskAssistantToPlan = {
-                    viewModel.sendMessage("Kayıtlı görevlerimi ve önceliklerimi inceleyerek bugün için verimli bir zaman ve eylem planı çıkarır mısın?")
-                },
-                onDismiss = {
-                    viewModel.setTasksDialogOpen(false)
                 }
             )
         }

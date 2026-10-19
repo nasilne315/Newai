@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Noro AI"
+rootProject.name = "Lynia"
 
 include(":app")

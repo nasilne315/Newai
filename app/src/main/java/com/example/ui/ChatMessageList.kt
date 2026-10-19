@@ -442,19 +442,22 @@ private fun AiMessageItem(
 
     // Automatically detect generated files (Artifacts) from code blocks (HTML, TXT, SVG, etc.)
     val extractedFiles = remember(message.text) {
-        if (!message.isStreaming && message.text.isNotBlank()) {
+        if (message.text.isNotBlank()) {
             FileExporter.extractGeneratedFiles(message.text)
         } else emptyList()
     }
     val allFiles = (message.generatedFiles + extractedFiles).distinctBy { it.fileName }
 
-    // When files are extracted, strip the redundant huge code blocks from the chat bubble
+    // Detect if a file is currently being generated while streaming
+    val generatingFileName = remember(message.text, message.isStreaming) {
+        if (message.isStreaming) {
+            FileExporter.getGeneratingFileName(message.text)
+        } else null
+    }
+
+    // Strip code blocks so raw code is NEVER shown in the chat text
     val displayText = remember(message.text, allFiles, message.isStreaming) {
-        if (!message.isStreaming && allFiles.isNotEmpty()) {
-            FileExporter.stripFileCodeBlocks(message.text, allFiles)
-        } else {
-            message.text
-        }
+        FileExporter.stripFileCodeBlocks(message.text, allFiles, message.isStreaming)
     }
 
     Box(
@@ -537,6 +540,15 @@ private fun AiMessageItem(
                 )
             } else if (message.text.isEmpty() && message.isStreaming) {
                 AiLoadingItem()
+            }
+
+            // Actively generating file card (spinning indicator while file code is being created)
+            if (generatingFileName != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                GeneratingFileCard(
+                    fileName = generatingFileName,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
             }
 
             // Artifact File Cards (Generated HTML, TXT, SVG, JSON files)
