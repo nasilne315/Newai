@@ -2,6 +2,7 @@ package com.example.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Button
@@ -36,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -48,11 +51,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.MemoryItem
+import com.example.model.RuleItem
 import com.example.ui.theme.DarkBg
 import com.example.ui.theme.DarkBorder
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceVariant
-import com.example.ui.theme.SendButtonDarkBlue
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
@@ -61,12 +64,18 @@ import com.example.ui.theme.TextSecondary
 @Composable
 fun MemoryDialog(
     memories: List<MemoryItem>,
+    rules: List<RuleItem>,
     onAddMemory: (String) -> Unit,
     onRemoveMemory: (String) -> Unit,
-    onClearAll: () -> Unit,
+    onClearAllMemories: () -> Unit,
+    onAddRule: (String) -> Unit,
+    onRemoveRule: (String) -> Unit,
+    onClearAllRules: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var newMemoryInput by remember { mutableStateOf("") }
+    // 0: Kişisel Hafıza, 1: Kurallar (Rules)
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var inputText by remember { mutableStateOf("") }
 
     BasicAlertDialog(
         onDismissRequest = onDismiss,
@@ -93,22 +102,25 @@ fun MemoryDialog(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(38.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF8B5CF6).copy(alpha = 0.2f)),
+                                .background(
+                                    if (selectedTab == 0) Color(0xFF8B5CF6).copy(alpha = 0.2f)
+                                    else Color(0xFF38BDF8).copy(alpha = 0.2f)
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.Psychology,
+                                imageVector = if (selectedTab == 0) Icons.Rounded.Psychology else Icons.Rounded.EditNote,
                                 contentDescription = null,
-                                tint = Color(0xFFA78BFA),
-                                modifier = Modifier.size(20.dp)
+                                tint = if (selectedTab == 0) Color(0xFFA78BFA) else Color(0xFF38BDF8),
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "Kişisel Hafıza (Beni Hatırla)",
+                                text = "Hafıza & Kurallar",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 17.sp
@@ -116,7 +128,7 @@ fun MemoryDialog(
                                 color = TextPrimary
                             )
                             Text(
-                                text = "Asistanın sizi daha iyi tanımasını sağlayın",
+                                text = if (selectedTab == 0) "Asistanın sizi tanımasını sağlayın" else "Asistana özel davranış kuralları tanımlayın",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextMuted
                             )
@@ -137,17 +149,94 @@ fun MemoryDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Input row for adding new memory
+                // Segmented Tabs: [Hafıza (Beni Tanı)] | [Kurallar (Rules)]
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(DarkBg)
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    // Tab 0: Hafıza
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (selectedTab == 0) Color(0xFF7C3AED) else Color.Transparent)
+                            .clickable {
+                                selectedTab = 0
+                                inputText = ""
+                            }
+                            .padding(vertical = 8.dp)
+                            .testTag("tab_memory"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Rounded.Psychology,
+                                contentDescription = null,
+                                tint = if (selectedTab == 0) Color.White else TextMuted,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Hafıza (${memories.size})",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Medium
+                                ),
+                                color = if (selectedTab == 0) Color.White else TextSecondary
+                            )
+                        }
+                    }
+
+                    // Tab 1: Rules (Kurallar)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (selectedTab == 1) Color(0xFF0284C7) else Color.Transparent)
+                            .clickable {
+                                selectedTab = 1
+                                inputText = ""
+                            }
+                            .padding(vertical = 8.dp)
+                            .testTag("tab_rules"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Rounded.EditNote,
+                                contentDescription = null,
+                                tint = if (selectedTab == 1) Color.White else TextMuted,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Kurallar (${rules.size})",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Medium
+                                ),
+                                color = if (selectedTab == 1) Color.White else TextSecondary
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Input row for adding new item
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedTextField(
-                        value = newMemoryInput,
-                        onValueChange = { newMemoryInput = it },
+                        value = inputText,
+                        onValueChange = { inputText = it },
                         placeholder = {
                             Text(
-                                "Örn: Android geliştiricisiyim, Kotlin severim",
+                                if (selectedTab == 0) "Örn: 11. sınıf öğrencisiyim, TYT-AYT hazırlanıyorum"
+                                else "Örn: Matematik çözümlerinde formülü adım adım yaz",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextMuted,
                                 maxLines = 1
@@ -157,7 +246,7 @@ fun MemoryDialog(
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = DarkBg,
                             unfocusedContainerColor = DarkBg,
-                            focusedBorderColor = Color(0xFFA78BFA),
+                            focusedBorderColor = if (selectedTab == 0) Color(0xFFA78BFA) else Color(0xFF38BDF8),
                             unfocusedBorderColor = DarkBorder,
                             focusedTextColor = TextPrimary,
                             unfocusedTextColor = TextPrimary
@@ -165,23 +254,27 @@ fun MemoryDialog(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .testTag("memory_input_field")
+                            .testTag("memory_rule_input_field")
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            if (newMemoryInput.isNotBlank()) {
-                                onAddMemory(newMemoryInput.trim())
-                                newMemoryInput = ""
+                            if (inputText.isNotBlank()) {
+                                if (selectedTab == 0) {
+                                    onAddMemory(inputText.trim())
+                                } else {
+                                    onAddRule(inputText.trim())
+                                }
+                                inputText = ""
                             }
                         },
-                        enabled = newMemoryInput.isNotBlank(),
+                        enabled = inputText.isNotBlank(),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF7C3AED),
+                            containerColor = if (selectedTab == 0) Color(0xFF7C3AED) else Color(0xFF0284C7),
                             disabledContainerColor = DarkBorder
                         ),
                         shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.testTag("add_memory_button")
+                        modifier = Modifier.testTag("add_memory_rule_button")
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Add,
@@ -194,85 +287,171 @@ fun MemoryDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // List of memories
-                if (memories.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(DarkBg, RoundedCornerShape(12.dp))
-                            .padding(20.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "Henüz kayıtlı hafıza bilgisi yok.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = TextSecondary
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Mesleğiniz, ilgi alanlarınız veya dil tercihleriniz gibi bilgileri ekleyerek asistanı eğitebilirsiniz.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextMuted,
-                                lineHeight = 16.sp
-                            )
+                // Tab Content: List of memories or rules
+                if (selectedTab == 0) {
+                    // MEMORIES LIST
+                    if (memories.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(DarkBg, RoundedCornerShape(12.dp))
+                                .padding(18.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "Henüz kayıtlı hafıza bilgisi yok.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Sınıfınız, ilgi alanlarınız veya hedefleriniz gibi bilgileri ekleyerek asistanı eğitebilirsiniz.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextMuted,
+                                    lineHeight = 16.sp
+                                )
+                            }
                         }
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 240.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(memories, key = { it.id }) { memory ->
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = DarkBg,
-                                border = BorderStroke(1.dp, DarkBorder),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 240.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(memories, key = { it.id }) { memory ->
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = DarkBg,
+                                    border = BorderStroke(1.dp, DarkBorder),
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text(
-                                        text = memory.content,
-                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
-                                        color = TextPrimary,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    IconButton(
-                                        onClick = { onRemoveMemory(memory.id) },
-                                        modifier = Modifier.size(30.dp)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.DeleteOutline,
-                                            contentDescription = "Sil",
-                                            tint = Color(0xFFEF4444),
-                                            modifier = Modifier.size(17.dp)
+                                        Text(
+                                            text = memory.content,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
+                                            color = TextPrimary,
+                                            modifier = Modifier.weight(1f)
                                         )
+                                        IconButton(
+                                            onClick = { onRemoveMemory(memory.id) },
+                                            modifier = Modifier.size(30.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.DeleteOutline,
+                                                contentDescription = "Sil",
+                                                tint = Color(0xFFEF4444),
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(onClick = onClearAllMemories) {
+                                Text(
+                                    text = "Tüm Hafızayı Temizle",
+                                    color = Color(0xFFEF4444),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
                     }
+                } else {
+                    // RULES LIST
+                    if (rules.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(DarkBg, RoundedCornerShape(12.dp))
+                                .padding(18.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "Henüz özel bir kural eklenmedi.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Asistanın yanıtlarken uymasını istediğiniz özel talimatları buraya ekleyin (örn: 'Soruları adım adım açıkla', 'Samimi bir dille cevap ver').",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextMuted,
+                                    lineHeight = 16.sp
+                                )
+                            }
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 240.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(rules, key = { it.id }) { rule ->
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = DarkBg,
+                                    border = BorderStroke(1.dp, DarkBorder),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = rule.content,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
+                                            color = TextPrimary,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        IconButton(
+                                            onClick = { onRemoveRule(rule.id) },
+                                            modifier = Modifier.size(30.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.DeleteOutline,
+                                                contentDescription = "Sil",
+                                                tint = Color(0xFFEF4444),
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        TextButton(onClick = onClearAll) {
-                            Text(
-                                text = "Tüm Hafızayı Temizle",
-                                color = Color(0xFFEF4444),
-                                style = MaterialTheme.typography.labelSmall
-                            )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(onClick = onClearAllRules) {
+                                Text(
+                                    text = "Tüm Kuralları Temizle",
+                                    color = Color(0xFFEF4444),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
                         }
                     }
                 }

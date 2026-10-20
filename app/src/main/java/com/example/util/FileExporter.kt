@@ -145,6 +145,11 @@ object FileExporter {
                 continue
             }
 
+            // Skip mathematical expressions / formulas (should be rendered in chat, not as downloadable files)
+            if (tag in listOf("latex", "math", "tex", "formula")) {
+                continue
+            }
+
             // 3. Any standard code or markup block -> ALWAYS convert to downloadable file
             val (name, ext) = when (tag) {
                 "html", "htm" -> (if (fileCount == 1) "index.html" else "sayfa_$fileCount.html") to "html"
@@ -174,6 +179,9 @@ object FileExporter {
             // If there's no closing fence after this open fence, it is actively generating
             if (!afterFence.contains("```")) {
                 val header = afterFence.lines().firstOrNull()?.trim() ?: ""
+                if (header.lowercase() in listOf("latex", "math", "tex", "formula")) {
+                    return null // Math block, not a file!
+                }
                 val fileName = when {
                     header.startsWith("file:", ignoreCase = true) -> header.substringAfter("file:").trim()
                     header.startsWith("download:", ignoreCase = true) -> header.substringAfter("download:").trim()
@@ -208,6 +216,11 @@ object FileExporter {
             val tag = matchResult.groupValues[1].lowercase().trim()
             val explicitName = matchResult.groupValues[2].trim()
             val code = matchResult.groupValues[3].trim()
+
+            // Do NOT strip math formulas!
+            if (tag in listOf("latex", "math", "tex", "formula")) {
+                return@replace matchResult.value
+            }
 
             val isExtracted = files.any { file ->
                 file.content.trim() == code || (explicitName.isNotBlank() && file.fileName.equals(explicitName, ignoreCase = true))

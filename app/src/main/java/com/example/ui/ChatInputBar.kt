@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Icon
@@ -90,6 +91,8 @@ fun ChatInputBar(
     onRemoveAttachedFile: () -> Unit,
     onToggleVoiceRecording: () -> Unit,
     onSendMessage: () -> Unit,
+    isWebSearchEnabled: Boolean = true,
+    onToggleWebSearch: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -107,22 +110,29 @@ fun ChatInputBar(
         }
     )
 
+    fun launchCamera() {
+        try {
+            val photoDir = java.io.File(context.cacheDir, "camera_photos").apply { mkdirs() }
+            val photoFile = java.io.File.createTempFile("camera_photo_", ".jpg", photoDir)
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                photoFile
+            )
+            tempCameraUri = uri
+            cameraLauncher.launch(uri)
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(context, "Kamera başlatılamadı: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
         onResult = { isGranted ->
             if (isGranted) {
-                try {
-                    val photoFile = java.io.File.createTempFile("camera_photo_", ".jpg", context.cacheDir)
-                    val uri = androidx.core.content.FileProvider.getUriForFile(
-                        context,
-                        "${context.packageName}.fileprovider",
-                        photoFile
-                    )
-                    tempCameraUri = uri
-                    cameraLauncher.launch(uri)
-                } catch (e: Exception) {
-                    // ignore
-                }
+                launchCamera()
+            } else {
+                android.widget.Toast.makeText(context, "Fotoğraf çekmek için kamera izni gerekiyor.", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     )
@@ -361,18 +371,7 @@ fun ChatInputBar(
                                     Manifest.permission.CAMERA
                                 ) == PackageManager.PERMISSION_GRANTED
                                 if (hasCameraPermission) {
-                                    try {
-                                        val photoFile = java.io.File.createTempFile("camera_photo_", ".jpg", context.cacheDir)
-                                        val uri = androidx.core.content.FileProvider.getUriForFile(
-                                            context,
-                                            "${context.packageName}.fileprovider",
-                                            photoFile
-                                        )
-                                        tempCameraUri = uri
-                                        cameraLauncher.launch(uri)
-                                    } catch (e: Exception) {
-                                        // ignore
-                                    }
+                                    launchCamera()
                                 } else {
                                     cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                                 }
@@ -388,6 +387,34 @@ fun ChatInputBar(
                                 tint = if (!isLoading) TextSecondary else TextMuted,
                                 modifier = Modifier.size(20.dp)
                             )
+                        }
+
+                        IconButton(
+                            onClick = onToggleWebSearch,
+                            enabled = !isLoading,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .testTag("web_search_toggle_button")
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isWebSearchEnabled) Color(0xFF0284C7).copy(alpha = 0.25f) else Color.Transparent)
+                                    .border(
+                                        width = if (isWebSearchEnabled) 1.dp else 0.dp,
+                                        color = if (isWebSearchEnabled) Color(0xFF38BDF8) else Color.Transparent,
+                                        shape = CircleShape
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Language,
+                                    contentDescription = if (isWebSearchEnabled) "Web Arama: Açık" else "Web Arama: Kapalı",
+                                    tint = if (isWebSearchEnabled) Color(0xFF38BDF8) else if (!isLoading) TextSecondary else TextMuted,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
 

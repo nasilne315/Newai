@@ -26,8 +26,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import com.example.model.GeneratedFile
 import com.example.ui.theme.DarkBg
 import kotlinx.coroutines.launch
@@ -42,7 +44,7 @@ fun ChatScreen(
     val apiKeyStatus by viewModel.apiKeyStatus.collectAsState()
     val chatSessions by viewModel.chatSessions.collectAsState()
     val memories by viewModel.memories.collectAsState()
-    val tasks by viewModel.tasks.collectAsState()
+    val rules by viewModel.rules.collectAsState()
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -165,35 +167,30 @@ fun ChatScreen(
                     .fillMaxSize()
                     .imePadding()
             ) { paddingValues ->
-                Column(
+                Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(paddingValues)
                         .background(DarkBg)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                    ) {
-                        ChatMessageList(
-                            messages = uiState.messages,
-                            isLoading = uiState.isLoading,
-                            listState = listState,
-                            isSpeaking = uiState.isSpeaking,
-                            speakingMessageId = uiState.speakingMessageId,
-                            onToggleSpeak = { text, id ->
-                                viewModel.toggleSpeakMessage(text, id)
-                            },
-                            onSuggestionClick = { prompt ->
-                                viewModel.sendMessage(prompt)
-                            },
-                            onOpenFile = { file ->
-                                previewFile = file
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
+                    ChatMessageList(
+                        messages = uiState.messages,
+                        isLoading = uiState.isLoading,
+                        listState = listState,
+                        isSpeaking = uiState.isSpeaking,
+                        speakingMessageId = uiState.speakingMessageId,
+                        onToggleSpeak = { text, id ->
+                            viewModel.toggleSpeakMessage(text, id)
+                        },
+                        onSuggestionClick = { prompt ->
+                            viewModel.sendMessage(prompt)
+                        },
+                        onOpenFile = { file ->
+                            previewFile = file
+                        },
+                        bottomContentPadding = 92.dp,
+                        modifier = Modifier.fillMaxSize()
+                    )
 
                     ChatInputBar(
                         inputText = uiState.inputText,
@@ -205,7 +202,11 @@ fun ChatScreen(
                         onRemoveAttachedFile = { viewModel.removeAttachedFile() },
                         onToggleVoiceRecording = { viewModel.toggleVoiceRecording() },
                         onSendMessage = { viewModel.sendMessage() },
-                        modifier = Modifier.fillMaxWidth()
+                        isWebSearchEnabled = uiState.isWebSearchEnabled,
+                        onToggleWebSearch = { viewModel.toggleWebSearch() },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
                     )
                 }
             }
@@ -233,18 +234,28 @@ fun ChatScreen(
             )
         }
 
-        // Personal Memory Management Dialog
+        // Personal Memory & Rules Management Dialog
         if (uiState.isMemoryDialogOpen) {
             MemoryDialog(
                 memories = memories,
+                rules = rules,
                 onAddMemory = { content ->
                     viewModel.addMemory(content)
                 },
                 onRemoveMemory = { id ->
                     viewModel.removeMemory(id)
                 },
-                onClearAll = {
+                onClearAllMemories = {
                     viewModel.clearMemories()
+                },
+                onAddRule = { content ->
+                    viewModel.addRule(content)
+                },
+                onRemoveRule = { id ->
+                    viewModel.removeRule(id)
+                },
+                onClearAllRules = {
+                    viewModel.clearRules()
                 },
                 onDismiss = {
                     viewModel.setMemoryDialogOpen(false)

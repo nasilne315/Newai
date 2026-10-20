@@ -40,7 +40,7 @@ data class ChatUiState(
     val isPersonaDialogOpen: Boolean = false,
     val isMemoryDialogOpen: Boolean = false,
     val isTasksDialogOpen: Boolean = false,
-    val isWebSearchEnabled: Boolean = true,
+    val isWebSearchEnabled: Boolean = false,
     val currentSessionId: String = java.util.UUID.randomUUID().toString(),
     val errorMessage: String? = null,
     val infoNotice: String? = null
@@ -333,10 +333,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 } else {
                     _uiState.update { state ->
+                        val accumulated = streamUpdate.accumulatedText
+                        var textToDisplay = accumulated
+                        var extractedNotice: String? = null
+
                         val finalMessages = state.messages.map { msg ->
                             if (msg.id == aiMessageId) {
+                                if (streamUpdate.isDone) {
+                                    val memoryRegex = "\\[AUTO_MEMORY:\\s*(.*?)\\]".toRegex()
+                                    val matchResult = memoryRegex.find(accumulated)
+                                    if (matchResult != null) {
+                                        val memoryContent = matchResult.groupValues[1].trim()
+                                        if (memoryContent.isNotBlank()) {
+                                            memoryManager.addMemory(memoryContent)
+                                            extractedNotice = "Hafızaya otomatik kaydedildi: '$memoryContent'"
+                                        }
+                                        textToDisplay = accumulated.replace(memoryRegex, "").trim()
+                                    }
+                                }
+
                                 msg.copy(
-                                    text = streamUpdate.accumulatedText,
+                                    text = textToDisplay,
                                     groundingSources = streamUpdate.groundingSources.ifEmpty { msg.groundingSources },
                                     searchQueries = streamUpdate.searchQueries.ifEmpty { msg.searchQueries },
                                     isStreaming = !streamUpdate.isDone
@@ -355,7 +372,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         state.copy(
                             messages = finalMessages,
                             isLoading = false,
-                            infoNotice = streamUpdate.failoverNotice ?: state.infoNotice
+                            infoNotice = extractedNotice ?: streamUpdate.failoverNotice ?: state.infoNotice
                         )
                     }
                 }

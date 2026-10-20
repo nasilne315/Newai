@@ -136,6 +136,25 @@ class ChatHistoryManager(private val context: Context) {
                     "timestamp" to msg.timestamp
                 )
                 if (msg.imageUri != null) msgMap["imageUri"] = msg.imageUri
+
+                if (msg.attachedFile != null) {
+                    val af = msg.attachedFile
+                    msgMap["hasFile"] = true
+                    msgMap["fileName"] = af.name
+                    msgMap["fileUri"] = af.uri
+                    msgMap["fileMime"] = af.mimeType
+                    msgMap["fileSize"] = af.sizeBytes
+                    msgMap["fileIsText"] = af.isText
+                    msgMap["fileIsPdf"] = af.isPdf
+                    msgMap["fileIsImage"] = af.isImage
+                    if (!af.cachedContent.isNullOrBlank()) {
+                        msgMap["fileContent"] = af.cachedContent
+                    }
+                    if (!af.localCachedPath.isNullOrBlank()) {
+                        msgMap["fileLocalPath"] = af.localCachedPath
+                    }
+                }
+
                 messagesCollection?.document(msg.id)?.set(msgMap)
             }
         } catch (e: Throwable) {
@@ -160,12 +179,29 @@ class ChatHistoryManager(private val context: Context) {
                         val text = doc.getString("text") ?: ""
                         val imageUri = doc.getString("imageUri")
                         val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
+
+                        val hasFile = doc.getBoolean("hasFile") ?: false
+                        val attachedFile = if (hasFile) {
+                            com.example.model.AttachedFile(
+                                uri = doc.getString("fileUri") ?: "",
+                                name = doc.getString("fileName") ?: "dosya",
+                                mimeType = doc.getString("fileMime") ?: "application/octet-stream",
+                                sizeBytes = doc.getLong("fileSize") ?: 0L,
+                                isImage = doc.getBoolean("fileIsImage") ?: false,
+                                isPdf = doc.getBoolean("fileIsPdf") ?: false,
+                                isText = doc.getBoolean("fileIsText") ?: false,
+                                cachedContent = doc.getString("fileContent"),
+                                localCachedPath = doc.getString("fileLocalPath")
+                            )
+                        } else null
+
                         list.add(
                             ChatMessage(
                                 id = id,
                                 sender = sender,
                                 text = text,
                                 imageUri = imageUri,
+                                attachedFile = attachedFile,
                                 timestamp = timestamp,
                                 isStreaming = false
                             )

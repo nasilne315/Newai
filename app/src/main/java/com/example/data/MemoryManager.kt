@@ -5,11 +5,18 @@ import android.content.SharedPreferences
 import android.util.Log
 import com.example.model.MemoryItem
 import com.example.model.RuleItem
+import com.google.android.gms.tasks.Task
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class MemoryManager(private val context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("personal_assistant_memory_prefs", Context.MODE_PRIVATE)
@@ -290,5 +297,61 @@ class MemoryManager(private val context: Context) {
             }
             append("Bu kurallar senin 1 numaralı önceliğindir ve tüm yanıtlarında dikkate alınmalıdır.\n")
         }
+    }
+
+    /**
+     * Actively fetches fresh memories and rules directly from Firestore on demand
+     * so that the AI always analyzes the freshest user guidelines.
+     */
+    suspend fun fetchFreshMemoriesAndRules(): Pair<String, String> = withContext(Dispatchers.IO) {
+        val db = firestore
+        if (db == null) {
+            return@withContext Pair(getFormattedMemoriesForSystemPrompt(), getFormattedRulesForSystemPrompt())
+        }
+
+        try {
+            val memTask = withTimeoutOrNull(2500) { db.collection("noro_memories").get().awaitResult() }
+            if (memTask != null && !memTask.isEmpty) {
+                val list = mutableListOf<MemoryItem>()
+                for (doc in memTask.documents) {
+                    val id = doc.getString("id") ?: doc.id
+                    val content = doc.getString("content") ?: ""
+                    val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
+                    if (content.isNotBlank()) {
+                        list.add(MemoryItem(id = id, content = content, timestamp = timestamp))
+                    }
+                }
+                _memories.value = list
+                saveLocalMemories(list)
+            }
+
+            val rulesTask = withTimeoutOrNull(2500) { db.collection("noro_rules").get().awaitResult() }
+            if (rulesTask != null && !rulesTask.isEmpty) {
+                val list = mutableListOf<RuleItem>()
+                for (doc in rulesTask.documents) {
+                    val id = doc.getString("id") ?: doc.id
+                    val content = doc.getString("content") ?: ""
+                    val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
+                    if (content.isNotBlank()) {
+                        list.add(RuleItem(id = id, content = content, timestamp = timestamp))
+                    }
+                }
+                _rules.value = list
+                saveLocalRules(list)
+            }
+        } catch (e: Exception) {
+            Log.w("MemoryManager", "Fresh fetch fallback to current state", e)
+        }
+
+        Pair(getFormattedMemoriesForSystemPrompt(), getFormattedRulesForSystemPrompt())
+    }
+}
+
+private suspend fun <T> Task<T>.awaitResult(): T = suspendCancellableCoroutine { cont ->
+    addOnSuccessListener { result ->
+        if (cont.isActive) cont.resume(result)
+    }
+    addOnFailureListener { exception ->
+        if (cont.isActive) cont.resumeWithException(exception)
     }
 }

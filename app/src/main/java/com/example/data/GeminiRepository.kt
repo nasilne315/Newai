@@ -7,12 +7,14 @@ import com.example.model.AttachedFile
 import com.example.model.ChatMessage
 import com.example.model.GroundingSource
 import com.example.model.MessageSender
+import com.example.util.FileExporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -42,9 +44,11 @@ class GeminiRepository(private val context: Context) {
     val apiKeyManager = ApiKeyManager(context)
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(90, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .connectionPool(okhttp3.ConnectionPool(10, 5, TimeUnit.MINUTES))
+        .connectTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
@@ -99,6 +103,11 @@ class GeminiRepository(private val context: Context) {
 
         var useSearchGrounding = isWebSearchEnabled
 
+        // Use instant in-memory context and memories for lightning-fast responses (Firestore snapshot listeners keep them live in real-time)
+        val freshRoutineContext = routineContextManager.routineSummary.value
+        val freshMemories = memoryManager.getFormattedMemoriesForSystemPrompt()
+        val freshRules = memoryManager.getFormattedRulesForSystemPrompt()
+
         attemptLoop@ for (attempt in 0 until attemptsCount) {
             val keyIndex = currentActive.first
             val keyValue = currentActive.second
@@ -109,7 +118,16 @@ class GeminiRepository(private val context: Context) {
                 val cleanModel = currentModel.removePrefix("models/")
                 val url = "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:streamGenerateContent?alt=sse&key=$keyValue"
 
-                val requestBody = buildRequestBody(userPrompt, attachedFile, conversationHistory, useSearchGrounding, persona)
+                val requestBody = buildRequestBody(
+                    userPrompt = userPrompt,
+                    attachedFile = attachedFile,
+                    conversationHistory = conversationHistory,
+                    includeSearchGrounding = useSearchGrounding,
+                    persona = persona,
+                    freshRoutineContext = freshRoutineContext,
+                    freshMemoriesText = freshMemories,
+                    freshRulesText = freshRules
+                )
                 val request = Request.Builder()
                     .url(url)
                     .addHeader("Accept", "text/event-stream")
@@ -126,49 +144,51 @@ class GeminiRepository(private val context: Context) {
                         val errBody = response.body?.string().orEmpty()
                         val lowerErr = errBody.lowercase()
 
-                        // If 404: Try next model
-                        if (code == 404 && modelIndex < modelsToTry.size - 1) {
-                            modelIndex++
-                            val nextModel = modelsToTry[modelIndex]
-                            val switchNote = "Model '$currentModel' 404 verdi. Otomatik olarak '$nextModel' deneniyor..."
-                            failoverNotice = if (failoverNotice == null) switchNote else "$failoverNotice | $switchNote"
-                            apiKeyManager.setSelectedModel(nextModel)
-                            continue
-                        }
-
-                        // If 429 (Quota / Rate Limit) or 503 (Overloaded)
+                        // If 404, 429, or 503: Try next model or failover
                         val is429or503 = code == 429 || code == 503 ||
                                 lowerErr.contains("quota") || lowerErr.contains("rate") ||
-                                lowerErr.contains("resource_exhausted") || lowerErr.contains("overloaded")
+                                lowerErr.contains("resource_exhausted") || lowerErr.contains("overloaded") ||
+                                code == 404
 
                         if (is429or503) {
-                            // First priority: If another API key is available in the pool, switch to it!
+                            // 1. Try next model if available
+                            if (modelIndex < modelsToTry.size - 1) {
+                                modelIndex++
+                                val nextModel = modelsToTry[modelIndex]
+                                val reason = when {
+                                    code == 503 || lowerErr.contains("overloaded") -> "Sunucu Yoğun (503)"
+                                    code == 429 -> "Kota Sınırı (429)"
+                                    else -> "Bulunamadı (404)"
+                                }
+                                failoverNotice = "Model '$currentModel' $reason. Otomatik olarak '$nextModel' modeline geçiliyor..."
+                                apiKeyManager.setSelectedModel(nextModel)
+                                delay(800)
+                                continue
+                            }
+
+                            // 2. If another API key is available in the pool, switch to it!
                             if (attempt < attemptsCount - 1) {
-                                val reason = if (code == 503 || lowerErr.contains("overloaded")) "Sunucu yoğun (503)" else "Kota doldu (429)"
+                                val reason = if (code == 503 || lowerErr.contains("overloaded")) "Sunucu yoğun (503)" else "Kota sınırı (429)"
                                 val nextKey = apiKeyManager.switchToNextKey(keyIndex, reason)
                                 if (nextKey != null) {
                                     failoverNotice = "Anahtar #${keyIndex + 1} ($reason). Otomatik olarak Anahtar #${nextKey.first + 1}'e geçildi."
                                     currentActive = nextKey
+                                    delay(1000)
                                     continue@attemptLoop
                                 }
                             }
 
-                            // If we have only 1 key and Search Grounding was active, search tool has lower quota.
-                            // Retry once without search tool to avoid blocking the user completely!
+                            // 3. Retry without search grounding if active
                             if (useSearchGrounding) {
                                 useSearchGrounding = false
-                                failoverNotice = "Canlı arama kotası (429) doldu. Standart model ile yanıt alınıyor..."
-                                delay(1200)
-                                continue // Retry this model without search tool
-                            }
-
-                            // If single key rate-limited (RPM), wait briefly and retry once
-                            if (attempt == 0 && attemptsCount == 1) {
-                                delay(2000)
+                                failoverNotice = "Arama aracı geçici olarak meşgul. Standart modda tekrar deneniyor..."
+                                delay(1000)
+                                continue
                             }
                         }
 
                         val specificMsg = when {
+                            code == 503 -> "HTTP 503 (Sunucu Yoğun): Google Gemini sunucuları şu anda çok yoğun veya geçici olarak bakımda. Lütfen 5-10 saniye sonra tekrar deneyin."
                             code == 429 -> "HTTP 429 (Kota Sınırı): Gemini dakikalık istek sınırı doldu. Birkaç saniye sonra tekrar deneyin veya menüden yedek API anahtarları ekleyin."
                             code == 404 -> "HTTP 404: Model ($cleanModel) bulunamadı. Lütfen API anahtarınızın geçerli olduğundan emin olun."
                             else -> "HTTP $code: $errBody"
@@ -306,6 +326,11 @@ class GeminiRepository(private val context: Context) {
 
         var useSearchGrounding = true
 
+        // Use instant in-memory context and memories for lightning-fast responses
+        val freshRoutineContext = routineContextManager.routineSummary.value
+        val freshMemories = memoryManager.getFormattedMemoriesForSystemPrompt()
+        val freshRules = memoryManager.getFormattedRulesForSystemPrompt()
+
         attemptLoop@ for (attempt in 0 until attemptsCount) {
             val keyIndex = currentActive.first
             val keyValue = currentActive.second
@@ -317,7 +342,15 @@ class GeminiRepository(private val context: Context) {
                 val url = "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:generateContent?key=$keyValue"
 
                 try {
-                    val requestBody = buildRequestBody(userPrompt, attachedFile, conversationHistory, useSearchGrounding)
+                    val requestBody = buildRequestBody(
+                        userPrompt = userPrompt,
+                        attachedFile = attachedFile,
+                        conversationHistory = conversationHistory,
+                        includeSearchGrounding = useSearchGrounding,
+                        freshRoutineContext = freshRoutineContext,
+                        freshMemoriesText = freshMemories,
+                        freshRulesText = freshRules
+                    )
                     val request = Request.Builder()
                         .url(url)
                         .post(requestBody)
@@ -458,23 +491,87 @@ class GeminiRepository(private val context: Context) {
         }
     }
 
+    private fun collectActiveProjectFiles(
+        attachedFile: AttachedFile?,
+        conversationHistory: List<ChatMessage>
+    ): Map<String, String> {
+        val filesMap = mutableMapOf<String, String>()
+
+        // 1. Chronologically scan conversation history for user files and AI generated code
+        for (msg in conversationHistory) {
+            if (msg.sender == MessageSender.USER && msg.attachedFile != null) {
+                val f = msg.attachedFile
+                val text = f.cachedContent
+                    ?: com.example.util.FileUtils.readFileContent(context, f)
+                if (!text.isNullOrBlank()) {
+                    filesMap[f.name] = if (text.length > 80000) text.take(80000) + "\n[... Dosya kısaltıldı ...]" else text
+                }
+            } else if (msg.sender == MessageSender.AI) {
+                for (gen in msg.generatedFiles) {
+                    if (gen.content.isNotBlank()) {
+                        filesMap[gen.fileName] = gen.content
+                    }
+                }
+                if (msg.text.contains("```file:")) {
+                    val extracted = FileExporter.extractGeneratedFiles(msg.text)
+                    for (ext in extracted) {
+                        if (ext.content.isNotBlank()) {
+                            filesMap[ext.fileName] = ext.content
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Add current turn attached file if readable text
+        if (attachedFile != null) {
+            val currentText = attachedFile.cachedContent
+                ?: com.example.util.FileUtils.readFileContent(context, attachedFile)
+            if (!currentText.isNullOrBlank()) {
+                filesMap[attachedFile.name] = if (currentText.length > 80000) currentText.take(80000) + "\n[... Dosya kısaltıldı ...]" else currentText
+            }
+        }
+
+        return filesMap
+    }
+
     private fun buildRequestBody(
         userPrompt: String,
         attachedFile: AttachedFile?,
         conversationHistory: List<ChatMessage>,
         includeSearchGrounding: Boolean = true,
-        persona: com.example.model.AssistantPersona = com.example.model.AssistantPersona.GENERAL
+        persona: com.example.model.AssistantPersona = com.example.model.AssistantPersona.GENERAL,
+        freshRoutineContext: String? = null,
+        freshMemoriesText: String? = null,
+        freshRulesText: String? = null
     ): RequestBody {
         val rootJson = JSONObject()
         val contentsArray = JSONArray()
 
+        val activeFiles = collectActiveProjectFiles(attachedFile, conversationHistory)
+
+        // Optimized token budget and generation tuning for maximum speed, accuracy & coding excellence
+        val genConfig = JSONObject().apply {
+            put("temperature", 0.5)
+            put("topP", 0.95)
+            put("topK", 40)
+            put("maxOutputTokens", 8192)
+        }
+        rootJson.put("generationConfig", genConfig)
+
+        // Keep compact multi-turn context (last 10 messages) without file duplication bloat
         val recentHistory = conversationHistory.takeLast(10)
         for (msg in recentHistory) {
-            if (msg.text.isBlank()) continue
             val contentObj = JSONObject()
             contentObj.put("role", if (msg.sender == MessageSender.USER) "user" else "model")
             val partsArray = JSONArray()
-            partsArray.put(JSONObject().put("text", msg.text))
+
+            val messageText = msg.text.ifBlank {
+                if (msg.attachedFile != null) "[Ekli Dosya: ${msg.attachedFile.name}]" else ""
+            }
+
+            if (messageText.isBlank()) continue
+            partsArray.put(JSONObject().put("text", messageText))
             contentObj.put("parts", partsArray)
             contentsArray.put(contentObj)
         }
@@ -488,7 +585,9 @@ class GeminiRepository(private val context: Context) {
         if (attachedFile != null) {
             val fileUri = Uri.parse(attachedFile.uri)
             if (attachedFile.isPdf) {
-                val base64Data = readFileAsBase64(fileUri)
+                val base64Data = attachedFile.cachedBase64
+                    ?: com.example.util.FileUtils.readFileBase64(context, attachedFile)
+                    ?: readFileAsBase64(fileUri)
                 if (base64Data != null) {
                     val inlineDataObj = JSONObject()
                         .put("mimeType", "application/pdf")
@@ -496,7 +595,9 @@ class GeminiRepository(private val context: Context) {
                     currentParts.put(JSONObject().put("inlineData", inlineDataObj))
                 }
             } else if (attachedFile.isImage) {
-                val base64Data = readFileAsBase64(fileUri)
+                val base64Data = attachedFile.cachedBase64
+                    ?: com.example.util.FileUtils.readFileBase64(context, attachedFile)
+                    ?: readFileAsBase64(fileUri)
                 if (base64Data != null) {
                     val mime = if (attachedFile.mimeType.isNotBlank()) attachedFile.mimeType else "image/jpeg"
                     val inlineDataObj = JSONObject()
@@ -505,12 +606,17 @@ class GeminiRepository(private val context: Context) {
                     currentParts.put(JSONObject().put("inlineData", inlineDataObj))
                 }
             } else if (attachedFile.isText) {
-                val textContent = readFileAsText(fileUri)
+                val textContent = activeFiles[attachedFile.name]
+                    ?: attachedFile.cachedContent
+                    ?: com.example.util.FileUtils.readFileContent(context, attachedFile)
+                    ?: readFileAsText(fileUri)
                 if (textContent != null) {
                     promptText = "[Ekli Dosya: ${attachedFile.name}]\nİçerik:\n$textContent\n---\n[Kullanıcı Sorusu/Talimatı]: ${userPrompt.ifBlank { "Bu dosyanın içeriğini analiz et ve açıkla." }}"
                 }
             } else {
-                val base64Data = readFileAsBase64(fileUri)
+                val base64Data = attachedFile.cachedBase64
+                    ?: com.example.util.FileUtils.readFileBase64(context, attachedFile)
+                    ?: readFileAsBase64(fileUri)
                 if (base64Data != null) {
                     val inlineDataObj = JSONObject()
                         .put("mimeType", attachedFile.mimeType.ifBlank { "application/octet-stream" })
@@ -534,12 +640,12 @@ class GeminiRepository(private val context: Context) {
             rootJson.put("tools", toolsArray)
         }
 
-        val memoryText = memoryManager.getFormattedMemoriesForSystemPrompt()
-        val rulesText = memoryManager.getFormattedRulesForSystemPrompt()
-        val routineText = routineContextManager.routineSummary.value
+        val memoryText = freshMemoriesText ?: memoryManager.getFormattedMemoriesForSystemPrompt()
+        val rulesText = freshRulesText ?: memoryManager.getFormattedRulesForSystemPrompt()
+        val routineText = freshRoutineContext ?: routineContextManager.routineSummary.value
 
         val fullSystemPrompt = buildString {
-            append("Sen son derece bilgili, doğal, samimi, Türkçe dilinde usta ve internetteki en güncel bilgilere erişebilen çok yönlü bir kişisel yapay zeka asistanısın.\n\n")
+            append("Sen son derece zeki, doğal, samimi, Türkçe dilinde usta, kıdemli baş yazılım mimarı ve internetteki en güncel bilgilere erişebilen çok yönlü bir kişisel yapay zeka asistanısın.\n\n")
             if (rulesText.isNotBlank()) {
                 append(rulesText).append("\n\n")
             }
@@ -549,24 +655,67 @@ class GeminiRepository(private val context: Context) {
             if (routineText.isNotBlank()) {
                 append(routineText).append("\n\n")
             }
+
+            if (activeFiles.isNotEmpty()) {
+                append("======================================================================\n")
+                append("AKTİF PROJE VE ÇALIŞMA DOSYALARI (SOHBET HAFIZASI & EN GÜNCEL KODLAR):\n")
+                append("Bu sohbette kullanıcının yüklediği veya senin geliştirdiğin/değiştirdiğin tüm dosyalar tam ve en güncel halleriyle hafızandadır:\n\n")
+                for ((fileName, fileContent) in activeFiles) {
+                    append("[AKTİF DOSYA: $fileName (Son Güncel Versiyon)]\n")
+                    append("```file:$fileName\n")
+                    append(fileContent.trim())
+                    append("\n```\n\n")
+                }
+                append("======================================================================\n\n")
+            }
+
             append("""
             İNTERNET VE GÜNCEL BİLGİ ARAŞTIRMA KURALI (ÇOK ÖNEMLİ):
             1. Kullanıcının sorusu güncel olaylar, tarih, saat, son haberler, hava durumu, piyasa fiyatları, canlı maçlar, yeni teknolojiler, kişiler, olaylar veya araştırma gerektiren herhangi bir konu içeriyorsa; Google Search aracını kullanarak internette kapsamlı, derinlemesine ve en güncel aramaları yap.
             2. Web aramalarından elde ettiğin en doğru ve güncel bilgileri sentezleyerek kullanıcıya net, doğru ve doğrudan aktar.
             3. Kullanıcının sorduğu konu hakkında bilgilerin en son halini sunmaktan çekinme ve kaynakların doğruluğunu gözet.
 
-            11. SINIF & TYT-AYT SORU ÇÖZÜMÜ VE EĞİTİM REHBERİ:
-            1. Kullanıcı matematik, geometri, fizik, kimya, biyoloji, Türkçe veya TYT-AYT sınav sorusu sorduğunda veya sorunun fotoğrafını attığında; soruyu aceleye getirmeden adım adım çöz.
-            2. Önce sorudaki verilenleri ve isteneni belirle. Hangi konunun hangi teorem, kural veya formülünün kullanıldığını açıkça yaz.
-            3. Çözüm adımlarını mantık sırasına göre numaralandır veya alt alta sırala. Matematiksel işlemleri net ve okunaklı yap.
-            4. Şıklı sorularda doğru cevabın hangi şık olduğunu ve neden o şık olduğunu gerekçesiyle açıkla; varsa soru kökündeki püf noktaları belirt.
+            11. SINIF, TYT-AYT VE GELİŞMİŞ MATEMATİK REHBERİ (ÇOK ÖNEMLİ):
+            1. Kullanıcı matematik, geometri, fizik, kimya, biyoloji veya sınav sorusu sorduğunda ya da sorunun fotoğrafını attığında; soruyu aceleye getirmeden adım adım ve tertemiz bir dille çöz.
+            2. ASLA KARMAŞIK, KOD GİBİ ANLAŞILMAZ HAM LATEX YAZMA:
+               Matematiksel işlemleri ve formülleri KESİNLİKLE \begin{aligned}, karmaşık parantezler, \left( \right), gereksiz kod blokları veya okunaksız sembol yığını şeklinde yazma!
+               İşlemleri ve formülleri doğrudan Unicode karakterleri (², ³, ⁴, ⁿ, ₁, ₂, √, ±, ×, ÷, ≤, ≥, ≠, π, θ, Δ, α, β, →, ∞, vb.) ve sade kesirler ((a + b) / 2) kullanarak, ders tahtasına yazılan tertemiz bir ders notu gibi doğrudan anlaşılır yaz.
+            3. Çözüm adımlarını mantık sırasına göre numaralandır veya alt alta sırala:
+               Önce sorudaki verilenleri ve isteneni belirle. Hangi kural veya formülün kullanıldığını netçe yaz.
+               Her işlem adımını tane tane göster (Örnek: "Adım 1: Diskriminantı bulalım: Δ = b² - 4ac = (-8)² - 4(2)(6) = 16").
+            4. Şıklı sorularda doğru cevabın hangi şık olduğunu ve neden o şık olduğunu gerekçesiyle açıkla; soru kökündeki püf noktaları belirt.
 
-            KULLANICI DOSYALARI ÜZERİNDE DÜZENLEME VE GELİŞTİRME:
-            1. Kullanıcı bir dosya (HTML, Python, CSS, JavaScript, JSON, metin vb.) yükleyip üzerinde değişiklik, geliştirme veya hata düzeltmesi istediğinde; dosyanın içeriğini dikkatlice analiz et.
-            2. İstenen değişiklikleri eksiksiz uygulayarak güncellenmiş dosyanın tamamını yine ```file:dosya_adi.uzanti formatında doğrudan indirilebilir yeni dosya olarak teslim et.
+            KULLANICI DOSYALARI ÜZERİNDE DÜZENLEME, GELİŞTİRME VE İLERİ DÜZEY KODLAMA (KRİTİK MİMARİ):
+            1. DOSYALARI AYNEN VE EKSİKSİZ AKLINDA TUT:
+               Kullanıcının daha önce yüklediği veya sohbette geliştirilen tüm dosyalar yukarıdaki [AKTİF DOSYA] bölümünde en güncel haliyle yer almaktadır.
+               Kullanıcı "bu dosyada değişiklik yap", "bunu güncelle", "şunu ekle", "kodda şu hatayı düzelt", "tasarımı geliştir" gibi isteklerde bulunduğunda, dosyanın tüm mevcut kodlarını, mimarisini, yapısını ve amacını eksiksiz hatırla. Dosyayı baştan rastgele uydurma.
+            2. MEVCUT KODLARI VE MANTIĞI EKSİKSİZ KORU (ASLA BOZMA & SİLME):
+               Kullanıcı bir dosya (HTML, CSS, JavaScript, Python, JSON, Kotlin, metin vb.) üzerinde değişiklik, ekleme veya geliştirme istediğinde; dosyanın çalışan mevcut özelliklerini, stillerini, tasarımını, fonksiyonlarını, event listener'larını ve sınıf yapılarını KESİNLİKLE silme veya bozma! Sadece istenen yeni özellikleri mükemmel bir ahenk ve cerrahi bir hassasiyetle mevcut kodlara entegre et.
+            3. ASLA YER TUTUCU / KISALTMA / TEMBELLİK KULLANMA (ZERO PLACEHOLDERS):
+               Kod yazarken ASLA '// kodun geri kalanı aynı', '<!-- mevcut stiller burada kalacak -->', '/* ... */', '// TODO' gibi yer tutucu veya kısaltmalar KULLANMA. Kullanıcı dosyayı doğrudan indirip çalıştıracağı veya önizleyeceği için dosyanın 1. satırından son satırına kadar %100 eksiksiz, hatasız, tüm kodları dahil edilmiş tam halini ```file:dosya_adi.uzanti bloğu içine koy.
+            4. DÜNYA STANDARDI İLERİ DÜZEY KOD MİMARİSİ:
+               - Web Sayfaları & HTML5: Modern, ultra responsive (mobil ve masaüstü mükemmel uyumlu), modern tipografi, şık renk paletleri, yumuşak mikro animasyonlar (transition/keyframes), modern CSS flexbox & grid düzenleri, estetik modern kartlar, gölgeler ve interaktif özellikler içersin. Tek parça halinde çalışabilmesi için CSS'i <style>, JavaScript'i <script> içinde eksiksiz barındır.
+               - Python & Algoritmalar: PEP-8 standartlarına tam uyumlu, modern tip ipuçları (type hints), kapsamlı hata yakalama (try-except), anlaşılır değişken isimleri ve yüksek performanslı algoritmalar kullan.
+               - JavaScript / TypeScript: ES2023+ modern standartlar (async/await, modern API'lar, modüler ve temiz mimari).
+               - Kotlin / Android: Temiz Compose ve modern Kotlin standartları.
+               - SVG Çizimler: Temiz viewBox, modern renkler ve ölçeklenebilir pürüzsüz vektörler tasarla.
+            5. SOHBETTE KISA VE PROFESYONEL ÖZET, KODLAR DOSYADA:
+               Sohbet metninde kullanıcının zamanını çalmadan, dosyada ne gibi yenilikler ve geliştirmeler yaptığını 2-3 samimi, net ve teknik açıdan profesyonel maddeyle açıkla. Kodların tamamını ```file:dosya_adi.uzanti bloğunun içine yerleştir.
+
+            DİNAMİK NİYET VE BAĞLAM ADAPTASYONU (ORGANIC INTENT ADAPTATION):
+            1. Sabit ve katı tetikleyicilere bağımlı olma. Kullanıcının mesajındaki tonu, bağlamı ve ihtiyacı anlık olarak analiz et:
+               - Gündelik sohbetler ve selamlaşmalarda: Son derece doğal, samimi, kısa, sıcak ve insani bir dille yanıt ver.
+               - Şimşek hızında pratik bilgi veya kısa soru/cevaplarda: Lafı uzatmadan, doğrudan, net ve en hızlı şekilde çözüm sun.
+               - Derin kodlama, geliştirme ve teknik analizlerde: %100 eksiksiz, üretim kalitesinde, modern mimari kurallarına uygun kod blokları ve profesyonel teknik açıklamalar yap.
+               - Strateji ve beyin fırtınasında: Çok yönlü, yapıcı ve zengin perspektifler sun.
+
+            KULLANICI HAFIZASI OTOMATİK KAYIT (AUTO-MEMORY EXTRACTION):
+            Eğer kullanıcı sohbette senin aklında tutmanı istediği kişisel bir bilgi, hedef, tercih, sınav durumu veya önemli bir kural belirtirse (örneğin 'unutma', 'aklında tut', 'ben şu sınavına hazırlanıyorum', 'şu teknolojiyi kullanıyorum' vb.), yanıtının en sonuna şu formatta ekle:
+            [AUTO_MEMORY: Kaydedilecek bilgi]
+            Sistem bunu otomatik olarak algılayıp kullanıcının kişisel hafızasına kaydedecektir.
 
             DOĞAL VE SADE SOHBET:
-            1. Varsayılan tarzın sade, akıcı ve tıpkı bir insan gibi doğal olmalıdır.
+            1. Varsayılan tarzın sade, akıcı, hızlı ve tıpkı bir insan gibi doğal olmalıdır.
             2. Normal sohbetlerde, selamlaşmalarda (merhaba, selam, nasılsın, naber vb.) ve kısa/genel sorularda KESİNLİKLE başlık (#), kutucuk (>), ara çizgi (---) veya altı çizili kelimeler KULLANMA. Doğrudan, sade ve net bir dille yanıt ver.
             3. BİÇİMLENDİRME ENFLASYONUNDAN KAÇIN: Cümlelerin içine gereksiz yere kalın (**), altı çizili (__) veya semboller sıkıştırma. Metin sade ve göz yormayan bir akışta olmalı.
             4. DOSYA ANALİZİ: Kullanıcı PDF, metin, kod, tablo veya başka bir dosya paylaştığında dosyanın içeriğini ayrıntılı, dikkatli ve doğru şekilde analiz et.
@@ -585,11 +734,12 @@ class GeminiRepository(private val context: Context) {
                - Metin/not belgesi için: ```file:notlar.txt
                - Diğer dosyalar için: ```file:dosya_adi.uzanti
             3. SOHBETTE SADECE KISA BİR AÇIKLAMA YAP:
-               Sohbet metninde sadece dosyanın ne olduğunu anlatan 1-2 cümlelik sade bir açıklama yap (Örnek: "İstediğin HTML sayfasını hazırladım, aşağıdaki karttan tam ekran önizleyebilir veya indirebilirsin."). Kodların tamamını ```file:dosya_adi.uzanti bloğunun içine koy. Uygulama bu kodu otomatik olarak gizleyip indirilebilir/önizlenebilir dosya kartı olarak sunacaktır.
+               Sohbet metninde sadece dosyanın ne olduğunu anlatan 1-2 cümlelik sade bir açıklama yap (Örnek: "İstediğin güncellemeleri tamamladım, aşağıdaki karttan dosyayı önizleyebilir veya indirebilirsin."). Kodların tamamını ```file:dosya_adi.uzanti bloğunun içine koy. Uygulama bu kodu otomatik olarak gizleyip indirilebilir/önizlenebilir dosya kartı olarak sunacaktır.
 
-            ÖZETLE: Bir insanla sohbet eder gibi doğal, kibar, güncel ve sade ol.
+            ÖZETLE: Bir insanla sohbet eder gibi doğal, kibar, güncel, hızlı ve sade ol.
             """.trimIndent())
         }
+
 
         val systemInstructionObj = JSONObject()
         val sysParts = JSONArray()
@@ -619,3 +769,4 @@ class GeminiRepository(private val context: Context) {
         }
     }
 }
+

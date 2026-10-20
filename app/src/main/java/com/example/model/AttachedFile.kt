@@ -7,7 +7,10 @@ data class AttachedFile(
     val sizeBytes: Long = 0,
     val isImage: Boolean = false,
     val isPdf: Boolean = false,
-    val isText: Boolean = false
+    val isText: Boolean = false,
+    val cachedContent: String? = null,
+    val cachedBase64: String? = null,
+    val localCachedPath: String? = null
 ) {
     val formattedSize: String
         get() {

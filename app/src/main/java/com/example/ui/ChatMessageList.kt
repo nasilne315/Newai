@@ -107,6 +107,7 @@ fun ChatMessageList(
     onToggleSpeak: (text: String, id: String) -> Unit = { _, _ -> },
     onSuggestionClick: (String) -> Unit = {},
     onOpenFile: (GeneratedFile) -> Unit = {},
+    bottomContentPadding: androidx.compose.ui.unit.Dp = 88.dp,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -122,7 +123,12 @@ fun ChatMessageList(
                 modifier = Modifier
                     .fillMaxSize()
                     .testTag("chat_messages_lazy_column"),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 20.dp),
+                contentPadding = PaddingValues(
+                    start = 20.dp,
+                    top = 20.dp,
+                    end = 20.dp,
+                    bottom = bottomContentPadding + 20.dp
+                ),
                 verticalArrangement = Arrangement.spacedBy(22.dp)
             ) {
                 items(messages, key = { it.id }) { message ->
