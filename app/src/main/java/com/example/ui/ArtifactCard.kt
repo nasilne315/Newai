@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.DataObject
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Html
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +51,7 @@ fun ArtifactCard(
     modifier: Modifier = Modifier
 ) {
     val (accentColor, icon, typeName) = when {
+        file.isPdf -> Triple(Color(0xFFEF4444), Icons.Rounded.PictureAsPdf, "PDF Dokümanı")
         file.isHtml -> Triple(Color(0xFFE44D26), Icons.Rounded.Html, "HTML Belgesi")
         file.isTxt -> Triple(Color(0xFF3B82F6), Icons.Rounded.Description, "Metin Belgesi")
         file.isSvg -> Triple(Color(0xFFEC4899), Icons.Rounded.Image, "SVG Vektör")

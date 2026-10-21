@@ -12,7 +12,7 @@ data class ApiKeyStatus(
     val key2: String = "",
     val key3: String = "",
     val activeIndex: Int = 0,
-    val selectedModel: String = "gemini-2.0-flash",
+    val selectedModel: String = "gemini-2.0-flash-lite",
     val lastFailoverNotice: String? = null
 )
 
@@ -38,7 +38,7 @@ class ApiKeyManager(context: Context) {
         val key3 = storedKey3.ifEmpty { buildKey3 }
 
         val active = prefs.getInt("active_key_index", 0)
-        val model = prefs.getString("selected_model", "gemini-2.0-flash") ?: "gemini-2.0-flash"
+        val model = prefs.getString("selected_model", "gemini-2.0-flash-lite") ?: "gemini-2.0-flash-lite"
 
         return ApiKeyStatus(
             key1 = key1,
@@ -63,7 +63,7 @@ class ApiKeyManager(context: Context) {
         val clean1 = k1.trim()
         val clean2 = k2.trim()
         val clean3 = k3.trim()
-        val targetModel = (model ?: _status.value.selectedModel).trim().ifEmpty { "gemini-2.0-flash" }
+        val targetModel = (model ?: _status.value.selectedModel).trim().ifEmpty { "gemini-2.0-flash-lite" }
 
         prefs.edit()
             .putString("api_key_1", clean1)
@@ -82,7 +82,7 @@ class ApiKeyManager(context: Context) {
     }
 
     fun setSelectedModel(model: String) {
-        val cleanModel = model.trim().ifEmpty { "gemini-2.0-flash" }
+        val cleanModel = model.trim().ifEmpty { "gemini-2.0-flash-lite" }
         prefs.edit().putString("selected_model", cleanModel).apply()
         _status.value = _status.value.copy(selectedModel = cleanModel)
     }

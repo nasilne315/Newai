@@ -53,21 +53,49 @@ class GeminiRepository(private val context: Context) {
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
-    // Candidate models to automatically cycle through if one returns 404
+    // Candidate models to automatically cycle through for maximum speed and reliability
     private val candidateModels = listOf(
+        "gemini-2.0-flash-lite",
         "gemini-2.0-flash",
-        "gemini-1.5-flash",
         "gemini-2.5-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-2.0-flash-exp",
-        "gemini-flash-lite-latest"
+        "gemini-1.5-flash",
+        "gemini-flash-lite-latest",
+        "gemini-1.5-flash-latest"
     )
 
     /**
-     * Streams responses in real-time chunk-by-chunk using Gemini SSE streamGenerateContent.
-     * Incorporates Google Search Grounding to research up-to-date web information.
-     * Includes automatic 429 rate limit backoff, key pool failover, and search tool fallback.
+     * Pre-connects / warms up the OkHttpClient connection pool and TLS handshake
+     * in the background so that user messages encounter zero handshake latency.
      */
+    fun warmupConnection() {
+        val keys = apiKeyManager.getValidKeysWithIndices()
+        if (keys.isEmpty()) return
+        val testKey = keys.first().second
+        val request = Request.Builder()
+            .url("https://generativelanguage.googleapis.com/v1beta/models?key=$testKey")
+            .head()
+            .build()
+        client.newCall(request).enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {}
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                response.close()
+            }
+        })
+    }
+
+    /**
+     * Determines whether search grounding is truly necessary for the prompt
+     * to prevent running slow 4-second web searches on standard greetings or coding.
+     */
+    private fun isSearchWarranted(prompt: String): Boolean {
+        val lower = prompt.lowercase()
+        return lower.contains("haber") || lower.contains("bugün") || lower.contains("hava") ||
+                lower.contains("fiyat") || lower.contains("dolar") || lower.contains("euro") ||
+                lower.contains("maç") || lower.contains("son dakika") || lower.contains("tarih") ||
+                lower.contains("saat") || lower.contains("araştır") || lower.contains("kimdir") ||
+                lower.contains("2025") || lower.contains("2026") || lower.contains("en son")
+    }
+
     val memoryManager = MemoryManager(context)
     val taskManager = TaskManager(context)
     val routineContextManager = RoutineContextManager(context)
@@ -77,7 +105,7 @@ class GeminiRepository(private val context: Context) {
         attachedFile: AttachedFile? = null,
         conversationHistory: List<ChatMessage> = emptyList(),
         persona: com.example.model.AssistantPersona = com.example.model.AssistantPersona.GENERAL,
-        isWebSearchEnabled: Boolean = true
+        isWebSearchEnabled: Boolean = false
     ): Flow<StreamUpdate> = flow {
         val validKeys = apiKeyManager.getValidKeysWithIndices()
 
@@ -86,7 +114,7 @@ class GeminiRepository(private val context: Context) {
                 StreamUpdate(
                     accumulatedText = "Merhaba! Sohbet sistemi hazır.\n\n" +
                             "3 API anahtarı tanımlamak için sağ üstteki 3 nokta menüsünden 'API & Model Ayarları' seçeneğine tıklayabilirsiniz. " +
-                            "Model olarak gemini-2.0-flash kullanılmaktadır.",
+                            "Model olarak gemini-2.0-flash-lite kullanılmaktadır.",
                     failoverNotice = null,
                     isDone = true
                 )
@@ -98,10 +126,16 @@ class GeminiRepository(private val context: Context) {
         val attemptsCount = validKeys.size
         var currentActive = apiKeyManager.getActiveKey() ?: validKeys.first()
 
-        val preferred = "gemini-2.0-flash"
+        // Ultra-fast Dynamic Routing: Use flash-lite for instantaneous sub-300ms chat/Q&A,
+        // and switch to flash when full file editing or heavy code is detected
+        val isFileTask = attachedFile != null || isPromptRelatedToFiles(userPrompt, attachedFile)
+        val defaultModel = apiKeyManager.status.value.selectedModel.ifEmpty { "gemini-2.0-flash-lite" }
+        val preferred = if (isFileTask && defaultModel == "gemini-2.0-flash-lite") "gemini-2.0-flash" else defaultModel
+
         val modelsToTry = (listOf(preferred) + candidateModels).distinct()
 
-        var useSearchGrounding = isWebSearchEnabled
+        // Only run search tool if web search is enabled AND prompt actually contains time/news/lookup intent
+        var useSearchGrounding = isWebSearchEnabled && isSearchWarranted(userPrompt)
 
         // Use instant in-memory context and memories for lightning-fast responses (Firestore snapshot listeners keep them live in real-time)
         val freshRoutineContext = routineContextManager.routineSummary.value
@@ -228,8 +262,11 @@ class GeminiRepository(private val context: Context) {
                                         for (i in 0 until parts.length()) {
                                             val part = parts.getJSONObject(i)
                                             if (part.has("text")) {
-                                                val text = part.getString("text")
-                                                accumulated.append(text)
+                                                val isThought = part.optBoolean("thought", false)
+                                                if (!isThought) {
+                                                    val text = part.getString("text")
+                                                    accumulated.append(text)
+                                                }
                                             }
                                         }
                                     }
@@ -321,10 +358,12 @@ class GeminiRepository(private val context: Context) {
         val attemptsCount = validKeys.size
         var currentActive = apiKeyManager.getActiveKey() ?: validKeys.first()
 
-        val preferred = apiKeyManager.status.value.selectedModel.ifEmpty { "gemini-2.0-flash" }
+        val isFileTask = attachedFile != null || isPromptRelatedToFiles(userPrompt, attachedFile)
+        val defaultModel = apiKeyManager.status.value.selectedModel.ifEmpty { "gemini-2.0-flash-lite" }
+        val preferred = if (isFileTask && defaultModel == "gemini-2.0-flash-lite") "gemini-2.0-flash" else defaultModel
         val modelsToTry = (listOf(preferred) + candidateModels).distinct()
 
-        var useSearchGrounding = true
+        var useSearchGrounding = isSearchWarranted(userPrompt)
 
         // Use instant in-memory context and memories for lightning-fast responses
         val freshRoutineContext = routineContextManager.routineSummary.value
@@ -360,6 +399,8 @@ class GeminiRepository(private val context: Context) {
                     val responseBodyString = response.body?.string().orEmpty()
 
                     if (!response.isSuccessful) {
+                        val errorMsg = responseBodyString.lowercase()
+
                         if (response.code == 404 && modelIndex < modelsToTry.size - 1) {
                             modelIndex++
                             val nextModel = modelsToTry[modelIndex]
@@ -368,7 +409,6 @@ class GeminiRepository(private val context: Context) {
                             continue
                         }
 
-                        val errorMsg = responseBodyString.lowercase()
                         val is429or503 = response.code == 429 || response.code == 503 ||
                                 errorMsg.contains("quota") || errorMsg.contains("rate") ||
                                 errorMsg.contains("resource_exhausted") || errorMsg.contains("overloaded")
@@ -535,6 +575,19 @@ class GeminiRepository(private val context: Context) {
         return filesMap
     }
 
+    private fun isPromptRelatedToFiles(prompt: String, attachedFile: AttachedFile?): Boolean {
+        if (attachedFile != null) return true
+        val lower = prompt.lowercase()
+        return lower.contains("dosya") || lower.contains("kod") || lower.contains("html") ||
+                lower.contains("pdf") || lower.contains("belge") || lower.contains("rapor") ||
+                lower.contains("css") || lower.contains("javascript") || lower.contains("python") ||
+                lower.contains("script") || lower.contains("düzenle") || lower.contains("güncelle") ||
+                lower.contains("ekle") || lower.contains("düzelt") || lower.contains("hata") ||
+                lower.contains(".html") || lower.contains(".js") || lower.contains(".py") ||
+                lower.contains(".pdf") || lower.contains(".txt") || lower.contains(".json") || lower.contains(".css") ||
+                lower.contains("proje") || lower.contains("sayfa") || lower.contains("tasarım")
+    }
+
     private fun buildRequestBody(
         userPrompt: String,
         attachedFile: AttachedFile?,
@@ -552,15 +605,15 @@ class GeminiRepository(private val context: Context) {
 
         // Optimized token budget and generation tuning for maximum speed, accuracy & coding excellence
         val genConfig = JSONObject().apply {
-            put("temperature", 0.5)
+            put("temperature", 0.6)
             put("topP", 0.95)
             put("topK", 40)
-            put("maxOutputTokens", 8192)
+            put("maxOutputTokens", 4096)
         }
         rootJson.put("generationConfig", genConfig)
 
-        // Keep compact multi-turn context (last 10 messages) without file duplication bloat
-        val recentHistory = conversationHistory.takeLast(10)
+        // Keep compact rolling window (last 6 messages) for minimal token latency
+        val recentHistory = conversationHistory.takeLast(6)
         for (msg in recentHistory) {
             val contentObj = JSONObject()
             contentObj.put("role", if (msg.sender == MessageSender.USER) "user" else "model")
@@ -656,7 +709,8 @@ class GeminiRepository(private val context: Context) {
                 append(routineText).append("\n\n")
             }
 
-            if (activeFiles.isNotEmpty()) {
+            val shouldIncludeFullFiles = isPromptRelatedToFiles(userPrompt, attachedFile)
+            if (activeFiles.isNotEmpty() && shouldIncludeFullFiles) {
                 append("======================================================================\n")
                 append("AKTİF PROJE VE ÇALIŞMA DOSYALARI (SOHBET HAFIZASI & EN GÜNCEL KODLAR):\n")
                 append("Bu sohbette kullanıcının yüklediği veya senin geliştirdiğin/değiştirdiğin tüm dosyalar tam ve en güncel halleriyle hafızandadır:\n\n")
@@ -667,6 +721,8 @@ class GeminiRepository(private val context: Context) {
                     append("\n```\n\n")
                 }
                 append("======================================================================\n\n")
+            } else if (activeFiles.isNotEmpty()) {
+                append("Mevcut Proje Dosyaları: ${activeFiles.keys.joinToString(", ")} (Dosya düzenlemesi istendiğinde tüm kodlar yüklenecektir)\n\n")
             }
 
             append("""
@@ -725,6 +781,7 @@ class GeminiRepository(private val context: Context) {
                Kullanıcı HTML, web sayfası, Python, JavaScript, CSS, Kotlin, SVG, JSON veya herhangi bir kod, betik veya belge istediğinde; kodları KESİNLİKLE sohbette doğrudan ham kod bloğu olarak verme!
             2. HER ZAMAN İNDİRİLEBİLİR DOSYA OLARAK VER:
                Her zaman ve istisnasız ```file:dosya_adi.uzanti formatında sun:
+               - PDF Dokümanı/Ders Notu/Rapor için: ```file:belge_adi.pdf (Örn: ```file:11_sinif_fizik_notlari.pdf)
                - HTML için: ```file:index.html (veya sayfa_adi.html)
                - Python için: ```file:script.py
                - JavaScript için: ```file:script.js
@@ -733,8 +790,16 @@ class GeminiRepository(private val context: Context) {
                - JSON verisi için: ```file:veri.json
                - Metin/not belgesi için: ```file:notlar.txt
                - Diğer dosyalar için: ```file:dosya_adi.uzanti
-            3. SOHBETTE SADECE KISA BİR AÇIKLAMA YAP:
-               Sohbet metninde sadece dosyanın ne olduğunu anlatan 1-2 cümlelik sade bir açıklama yap (Örnek: "İstediğin güncellemeleri tamamladım, aşağıdaki karttan dosyayı önizleyebilir veya indirebilirsin."). Kodların tamamını ```file:dosya_adi.uzanti bloğunun içine koy. Uygulama bu kodu otomatik olarak gizleyip indirilebilir/önizlenebilir dosya kartı olarak sunacaktır.
+            3. PDF DOKÜMANI VE DERS NOTU/RAPOR OLUŞTURMA KURALI (KRİTİK & KODSUZ TEMİZ PDF):
+               - Kullanıcı PDF, ders notu, özet, soru föyü, çalışma rehberi, rapor, döküman veya belge istediğinde içeriği MUTLAKA ```file:belge_adi.pdf bloğunun içine koy.
+               - PDF İÇERİSİNDE ASLA KOD BLOKLARI, HTML TAGLERİ VEYA LATEX KOMUTLARI YAZMA!
+               - Başlıkları ve alt başlıkları net ve düzgün metin olarak yaz (Örn: '1. Giriş ve Temel Kavramlar', 'Newton'un Hareket Yasaları').
+               - Maddeleri temiz tire (-) veya madde imi ile sırala.
+               - Önemli noktaları 'Not: ...' veya 'Püf Noktası: ...' veya 'Formül: ...' şeklinde yaz.
+               - Formülleri doğrudan temiz Unicode sembolleriyle yaz (Örn: 'F = m · a', 'E = m · c²', 'Δx = v · t').
+               - Uygulamanın yerel PDF motoru bu metni otomatik olarak A4 sayfalarına, şık başlık stillerine, sayfa numaralarına ve estetik tasarıma dönüştürecektir.
+            4. SOHBETTE SADECE KISA BİR AÇIKLAMA YAP:
+               Sohbet metninde sadece dosyanın ne olduğunu anlatan 1-2 cümlelik sade bir açıklama yap (Örnek: "İstediğin PDF dokümanını hazırladım, aşağıdaki karttan inceleyebilir ve indirebilirsin."). Kodların veya belgenin tamamını ```file:dosya_adi.uzanti bloğunun içine koy. Uygulama bu kodu otomatik olarak gizleyip indirilebilir/önizlenebilir dosya kartı olarak sunacaktır.
 
             ÖZETLE: Bir insanla sohbet eder gibi doğal, kibar, güncel, hızlı ve sade ol.
             """.trimIndent())

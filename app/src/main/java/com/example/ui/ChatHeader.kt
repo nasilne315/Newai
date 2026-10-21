@@ -53,6 +53,9 @@ fun ChatHeader(
     onDismissMoreMenu: () -> Unit,
     onClearChatClick: () -> Unit,
     onOpenApiKeysDialog: () -> Unit,
+    onOpenCompanion: () -> Unit = {},
+    isThinking: Boolean = false,
+    isSpeaking: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -82,15 +85,12 @@ fun ChatHeader(
             )
         }
 
-        // Center subtle branding or clean whitespace
-        Text(
-            text = stringResource(R.string.app_name),
-            style = MaterialTheme.typography.titleMedium.copy(
-                fontWeight = FontWeight.Medium,
-                letterSpacing = 0.5.sp
-            ),
-            color = TextSecondary,
-            modifier = Modifier.testTag("header_title")
+        // Center: Animated living mini eyes avatar
+        com.example.ui.avatar.MiniHeaderEyes(
+            onClick = onOpenCompanion,
+            isThinking = isThinking,
+            isSpeaking = isSpeaking,
+            modifier = Modifier.testTag("header_avatar_button")
         )
 
         // Right: one rounded bubble containing two buttons side by side (add + more)

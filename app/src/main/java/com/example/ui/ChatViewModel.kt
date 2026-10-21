@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 import com.example.model.RuleItem
 
@@ -64,7 +65,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
+    private val _companionMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
+    val companionMessages: StateFlow<List<ChatMessage>> = _companionMessages.asStateFlow()
+
+    private val _companionInputText = MutableStateFlow("")
+    val companionInputText: StateFlow<String> = _companionInputText.asStateFlow()
+
+    private val _isCompanionLoading = MutableStateFlow(false)
+    val isCompanionLoading: StateFlow<Boolean> = _isCompanionLoading.asStateFlow()
+
     init {
+        repository.warmupConnection()
+        _companionMessages.value = chatHistoryManager.loadCompanionMessages()
         viewModelScope.launch {
             speechToTextManager.isListening.collect { listening ->
                 _uiState.update { it.copy(isRecordingVoice = listening) }
@@ -83,6 +95,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onInputTextChanged(newText: String) {
+        val oldText = _uiState.value.inputText
+        if (oldText.isEmpty() && newText.isNotEmpty()) {
+            repository.warmupConnection()
+        }
         _uiState.update { it.copy(inputText = newText) }
     }
 
@@ -378,6 +394,109 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    private val _isCompanionTypingAnticipating = MutableStateFlow(false)
+    val isCompanionTypingAnticipating: StateFlow<Boolean> = _isCompanionTypingAnticipating.asStateFlow()
+
+    private var typingJob: kotlinx.coroutines.Job? = null
+
+    fun onCompanionInputChanged(newText: String) {
+        if (_companionInputText.value.isEmpty() && newText.isNotEmpty()) {
+            repository.warmupConnection()
+        }
+        _companionInputText.value = newText
+
+        typingJob?.cancel()
+        if (newText.trim().length > 2) {
+            _isCompanionTypingAnticipating.value = true
+            typingJob = viewModelScope.launch {
+                delay(1200) // Keep anticipating state active while user pauses typing
+            }
+        } else {
+            _isCompanionTypingAnticipating.value = false
+        }
+    }
+
+    fun sendCompanionMessage(customPrompt: String? = null) {
+        val text = (customPrompt ?: _companionInputText.value).trim()
+        if (text.isEmpty() || _isCompanionLoading.value) return
+
+        typingJob?.cancel()
+        _isCompanionTypingAnticipating.value = false
+
+        val userMessage = ChatMessage(
+            sender = MessageSender.USER,
+            text = text
+        )
+
+        val aiMessageId = java.util.UUID.randomUUID().toString()
+        val initialAiMessage = ChatMessage(
+            id = aiMessageId,
+            sender = MessageSender.AI,
+            text = "",
+            isStreaming = true
+        )
+
+        val currentList = _companionMessages.value
+        val updated = currentList + userMessage + initialAiMessage
+        _companionMessages.value = updated
+        _companionInputText.value = ""
+        _isCompanionLoading.value = true
+
+        viewModelScope.launch {
+            repository.sendMessageStream(
+                userPrompt = text,
+                attachedFile = null,
+                conversationHistory = currentList + userMessage,
+                persona = AssistantPersona.GENERAL,
+                isWebSearchEnabled = false
+            ).collect { streamUpdate ->
+                if (streamUpdate.error != null) {
+                    val final = _companionMessages.value.map { msg ->
+                        if (msg.id == aiMessageId) {
+                            if (msg.text.isNotBlank()) msg.copy(isStreaming = false)
+                            else msg.copy(text = streamUpdate.error, isStreaming = false)
+                        } else msg
+                    }
+                    _companionMessages.value = final
+                    _isCompanionLoading.value = false
+                    chatHistoryManager.saveCompanionMessages(final)
+                } else {
+                    val accumulated = streamUpdate.accumulatedText
+                    var textToDisplay = accumulated
+                    val final = _companionMessages.value.map { msg ->
+                        if (msg.id == aiMessageId) {
+                            if (streamUpdate.isDone) {
+                                val memoryRegex = "\\[AUTO_MEMORY:\\s*(.*?)\\]".toRegex()
+                                val matchResult = memoryRegex.find(accumulated)
+                                if (matchResult != null) {
+                                    val memoryContent = matchResult.groupValues[1].trim()
+                                    if (memoryContent.isNotBlank()) {
+                                        memoryManager.addMemory(memoryContent)
+                                    }
+                                    textToDisplay = accumulated.replace(memoryRegex, "").trim()
+                                }
+                            }
+                            msg.copy(
+                                text = textToDisplay,
+                                isStreaming = !streamUpdate.isDone
+                            )
+                        } else msg
+                    }
+                    _companionMessages.value = final
+                    if (streamUpdate.isDone) {
+                        _isCompanionLoading.value = false
+                        chatHistoryManager.saveCompanionMessages(final)
+                    }
+                }
+            }
+        }
+    }
+
+    fun clearCompanionHistory() {
+        _companionMessages.value = emptyList()
+        chatHistoryManager.saveCompanionMessages(emptyList())
     }
 
     override fun onCleared() {

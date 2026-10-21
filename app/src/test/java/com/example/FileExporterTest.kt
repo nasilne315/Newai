@@ -37,8 +37,7 @@ class FileExporterTest {
     }
 
     @Test
-    fun testExtractGeneratedFiles_unspecifiedCodeRemainsPureCode() {
-        // When user didn't ask for a file, regular html snippet remains pure code
+    fun testExtractGeneratedFiles_unspecifiedCodeBecomesDownloadableFile() {
         val markdown = """
             HTML buton örneği:
             ```html
@@ -48,14 +47,16 @@ class FileExporterTest {
         """.trimIndent()
 
         val files = FileExporter.extractGeneratedFiles(markdown)
-        assertEquals(0, files.size)
+        assertEquals(1, files.size)
+        assertEquals("html", files[0].fileExtension)
 
         val stripped = FileExporter.stripFileCodeBlocks(markdown, files)
-        assertEquals(markdown, stripped)
+        assertFalse(stripped.contains("```html"))
+        assertTrue(stripped.contains("HTML buton örneği:"))
     }
 
     @Test
-    fun testExtractGeneratedFiles_pythonSnippetRemainsPureCode() {
+    fun testExtractGeneratedFiles_pythonSnippetBecomesDownloadableFile() {
         val markdown = """
             Python ile fibonacci kodu:
             ```python
@@ -65,7 +66,8 @@ class FileExporterTest {
         """.trimIndent()
 
         val files = FileExporter.extractGeneratedFiles(markdown)
-        assertEquals(0, files.size)
+        assertEquals(1, files.size)
+        assertEquals("py", files[0].fileExtension)
     }
 
     @Test

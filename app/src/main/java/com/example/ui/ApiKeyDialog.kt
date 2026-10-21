@@ -61,7 +61,7 @@ fun ApiKeyDialog(
     var key1 by remember { mutableStateOf(status.key1) }
     var key2 by remember { mutableStateOf(status.key2) }
     var key3 by remember { mutableStateOf(status.key3) }
-    val selectedModel = "gemini-2.0-flash"
+    val selectedModel = status.selectedModel.ifEmpty { "gemini-2.0-flash-lite" }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -91,7 +91,7 @@ fun ApiKeyDialog(
                         color = TextPrimary
                     )
                     Text(
-                        text = "Gemini 2.0 Flash • Otomatik Havuz",
+                        text = "Gemini 2.0 Flash-Lite (Ultra Hızlı) • Otomatik Havuz",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFF60A5FA)
                     )

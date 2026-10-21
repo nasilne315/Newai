@@ -234,4 +234,59 @@ class ChatHistoryManager(private val context: Context) {
             Log.e("ChatHistoryManager", "Error deleting session from Firestore", e)
         }
     }
+
+    fun loadCompanionMessages(): List<ChatMessage> {
+        val list = mutableListOf<ChatMessage>()
+        try {
+            val jsonString = prefs.getString("companion_saved_messages", null) ?: return emptyList()
+            val array = org.json.JSONArray(jsonString)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                val id = obj.getString("id")
+                val senderStr = obj.getString("sender")
+                val sender = if (senderStr == "AI") MessageSender.AI else MessageSender.USER
+                val text = obj.getString("text")
+                val timestamp = obj.optLong("timestamp", System.currentTimeMillis())
+                list.add(
+                    ChatMessage(
+                        id = id,
+                        sender = sender,
+                        text = text,
+                        timestamp = timestamp,
+                        isStreaming = false
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("ChatHistoryManager", "Error loading companion messages", e)
+        }
+        return list.sortedBy { it.timestamp }
+    }
+
+    fun saveCompanionMessages(messages: List<ChatMessage>) {
+        val nonStreaming = messages.filter { !it.isStreaming && it.text.isNotBlank() }
+        try {
+            val array = org.json.JSONArray()
+            for (msg in nonStreaming) {
+                val obj = org.json.JSONObject().apply {
+                    put("id", msg.id)
+                    put("sender", msg.sender.name)
+                    put("text", msg.text)
+                    put("timestamp", msg.timestamp)
+                }
+                array.put(obj)
+            }
+            prefs.edit().putString("companion_saved_messages", array.toString()).apply()
+
+            sessionsCollection?.document("companion_living_lynia")?.set(
+                mapOf(
+                    "id" to "companion_living_lynia",
+                    "title" to "Lynia Canlı Arkadaş",
+                    "timestamp" to System.currentTimeMillis()
+                )
+            )
+        } catch (e: Exception) {
+            Log.e("ChatHistoryManager", "Error saving companion messages", e)
+        }
+    }
 }

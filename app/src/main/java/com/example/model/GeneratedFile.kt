@@ -7,6 +7,7 @@ data class GeneratedFile(
     val content: String,
     val sizeBytes: Long = content.toByteArray(Charsets.UTF_8).size.toLong()
 ) {
+    val isPdf: Boolean get() = fileExtension.equals("pdf", ignoreCase = true)
     val isHtml: Boolean get() = fileExtension.equals("html", ignoreCase = true) || fileExtension.equals("htm", ignoreCase = true)
     val isTxt: Boolean get() = fileExtension.equals("txt", ignoreCase = true) || fileExtension.equals("text", ignoreCase = true)
     val isSvg: Boolean get() = fileExtension.equals("svg", ignoreCase = true)
@@ -15,6 +16,7 @@ data class GeneratedFile(
 
     val mimeType: String
         get() = when {
+            isPdf -> "application/pdf"
             isHtml -> "text/html"
             isSvg -> "image/svg+xml"
             isJson -> "application/json"
@@ -24,6 +26,7 @@ data class GeneratedFile(
 
     val typeDisplayName: String
         get() = when {
+            isPdf -> "PDF Dokümanı"
             isHtml -> "HTML Belgesi"
             isTxt -> "Metin Belgesi"
             isSvg -> "SVG Vektör"

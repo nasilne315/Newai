@@ -97,10 +97,13 @@ fun ChatScreen(
     }
 
     var previewFile by remember { mutableStateOf<GeneratedFile?>(null) }
+    var isCompanionModeOpen by remember { mutableStateOf(false) }
 
     // Handle back button
-    BackHandler(enabled = previewFile != null || drawerState.isOpen || uiState.isApiKeyDialogOpen || uiState.isMemoryDialogOpen) {
-        if (previewFile != null) {
+    BackHandler(enabled = isCompanionModeOpen || previewFile != null || drawerState.isOpen || uiState.isApiKeyDialogOpen || uiState.isMemoryDialogOpen) {
+        if (isCompanionModeOpen) {
+            isCompanionModeOpen = false
+        } else if (previewFile != null) {
             previewFile = null
         } else if (drawerState.isOpen) {
             coroutineScope.launch { drawerState.close() }
@@ -158,7 +161,12 @@ fun ChatScreen(
                         },
                         onOpenApiKeysDialog = {
                             viewModel.setApiKeyDialogOpen(true)
-                        }
+                        },
+                        onOpenCompanion = {
+                            isCompanionModeOpen = true
+                        },
+                        isThinking = uiState.isLoading,
+                        isSpeaking = uiState.isSpeaking
                     )
                 },
                 snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -210,6 +218,14 @@ fun ChatScreen(
                     )
                 }
             }
+        }
+
+        if (isCompanionModeOpen) {
+            com.example.ui.avatar.CompanionScreen(
+                viewModel = viewModel,
+                onDismiss = { isCompanionModeOpen = false },
+                modifier = Modifier.fillMaxSize()
+            )
         }
 
         val activePreviewFile = previewFile

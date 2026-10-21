@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -33,8 +34,11 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Html
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.OpenInNew
+import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,6 +46,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -66,8 +72,11 @@ import com.example.model.GeneratedFile
 import com.example.ui.theme.DarkBg
 import com.example.ui.theme.TextMuted
 import com.example.util.FileExporter
+import com.example.util.PdfExporter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -87,8 +96,10 @@ fun FullScreenFilePreview(
     var isHtmlLiveMode by remember { mutableStateOf(file.isHtml) }
     var isSvgPreviewMode by remember { mutableStateOf(file.isSvg) }
     var isMdPreviewMode by remember { mutableStateOf(file.isMarkdown) }
+    var isPdfPreviewMode by remember { mutableStateOf(file.isPdf) }
 
     val accentColor = when {
+        file.isPdf -> Color(0xFFEF4444)
         file.isHtml -> Color(0xFFE44D26)
         file.isTxt -> Color(0xFF3B82F6)
         file.isSvg -> Color(0xFFEC4899)
@@ -98,6 +109,7 @@ fun FullScreenFilePreview(
     }
 
     val typeIcon = when {
+        file.isPdf -> Icons.Rounded.PictureAsPdf
         file.isHtml -> Icons.Rounded.Html
         file.isTxt -> Icons.Rounded.Description
         file.isSvg -> Icons.Rounded.Image
@@ -182,11 +194,43 @@ fun FullScreenFilePreview(
                     }
                 }
 
-                // Sağ Üst Gri Butonlar: İndir ve Paylaş
+                // Sağ Üst Gri Butonlar: Aç (PDF ise), İndir ve Paylaş
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    if (file.isPdf) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF222630),
+                            border = BorderStroke(1.dp, Color(0xFF333A48)),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    val pdfFile = PdfExporter.generatePdf(context, file.fileName, file.content)
+                                    PdfExporter.openPdfExternal(context, pdfFile)
+                                }
+                                .testTag("preview_open_external_button")
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.OpenInNew,
+                                    contentDescription = "Cihazda Aç",
+                                    tint = Color(0xFFF87171),
+                                    modifier = Modifier.size(17.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "Aç",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                    color = Color(0xFFCBD5E1)
+                                )
+                            }
+                        }
+                    }
                     // Gri İndir Butonu
                     Surface(
                         shape = RoundedCornerShape(10.dp),
@@ -271,6 +315,22 @@ fun FullScreenFilePreview(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 when {
+                    file.isPdf -> {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            PreviewModeChip(
+                                label = "PDF Sayfaları",
+                                icon = Icons.Rounded.PictureAsPdf,
+                                isSelected = isPdfPreviewMode,
+                                onClick = { isPdfPreviewMode = true }
+                            )
+                            PreviewModeChip(
+                                label = "Metin İçeriği",
+                                icon = Icons.Rounded.Description,
+                                isSelected = !isPdfPreviewMode,
+                                onClick = { isPdfPreviewMode = false }
+                            )
+                        }
+                    }
                     file.isHtml -> {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             PreviewModeChip(
@@ -371,7 +431,15 @@ fun FullScreenFilePreview(
                     .background(Color(0xFF141518))
             ) {
                 when {
-                    // 1. Canlı HTML Web Görünümü (Koyu Arka Plan Destekli)
+                    // 1. Canlı PDF Belge Görünümü
+                    file.isPdf && isPdfPreviewMode -> {
+                        PdfDocumentViewer(
+                            file = file,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+
+                    // 2. Canlı HTML Web Görünümü (Koyu Arka Plan Destekli)
                     file.isHtml && isHtmlLiveMode -> {
                         val darkHtml = remember(file.content) { FileExporter.prepareDarkHtml(file.content) }
                         AndroidView(
@@ -571,6 +639,138 @@ private fun FullScreenCodeViewer(
                     ),
                     color = Color(0xFFE2E8F0)
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PdfDocumentViewer(
+    file: GeneratedFile,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var pdfActualFile by remember { mutableStateOf<java.io.File?>(null) }
+    var pdfPages by remember { mutableStateOf<List<android.graphics.Bitmap>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(file.content) {
+        isLoading = true
+        withContext(Dispatchers.IO) {
+            val generatedFile = PdfExporter.generatePdf(context, file.fileName, file.content)
+            val pages = PdfExporter.renderPdfPages(generatedFile, targetWidth = 1080)
+            pdfActualFile = generatedFile
+            pdfPages = pages
+        }
+        isLoading = false
+    }
+
+    if (isLoading) {
+        Box(
+            modifier = modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(
+                    color = Color(0xFFEF4444),
+                    strokeWidth = 2.5.dp,
+                    modifier = Modifier.size(36.dp)
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    text = "PDF Sayfaları Hazırlanıyor...",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF94A3B8)
+                )
+            }
+        }
+    } else if (pdfPages.isEmpty()) {
+        Box(
+            modifier = modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "PDF sayfaları oluşturulamadı.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFF94A3B8)
+            )
+        }
+    } else {
+        Box(modifier = modifier.fillMaxSize()) {
+            androidx.compose.foundation.lazy.LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF0F1117)),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 16.dp,
+                    bottom = 80.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                items(pdfPages.size) { index ->
+                    val bitmap = pdfPages[index]
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color.White,
+                            border = BorderStroke(1.dp, Color(0xFF262C3A)),
+                            shadowElevation = 6.dp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                        ) {
+                            androidx.compose.foundation.Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Sayfa ${index + 1}",
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Sayfa ${index + 1} / ${pdfPages.size}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF64748B)
+                        )
+                    }
+                }
+            }
+
+            // Floating Open in External Reader Bar at Bottom
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = Color(0xFF1E2330),
+                border = BorderStroke(1.2.dp, Color(0xFF333A48)),
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 16.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .clickable {
+                        pdfActualFile?.let { PdfExporter.openPdfExternal(context, it) }
+                    }
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.OpenInNew,
+                        contentDescription = null,
+                        tint = Color(0xFFF87171),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Cihazın PDF Okuyucusunda Aç",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = Color(0xFFF1F5F9)
+                    )
+                }
             }
         }
     }

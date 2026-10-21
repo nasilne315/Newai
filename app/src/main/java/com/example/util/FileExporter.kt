@@ -22,10 +22,21 @@ object FileExporter {
         mimeType: String = "text/plain"
     ): Boolean {
         try {
+            val isPdf = mimeType.equals("application/pdf", ignoreCase = true) || fileName.endsWith(".pdf", ignoreCase = true)
+            val effectiveMime = if (isPdf) "application/pdf" else mimeType
+            val effectiveName = if (isPdf && !fileName.endsWith(".pdf", ignoreCase = true)) "$fileName.pdf" else fileName
+
+            val bytes = if (isPdf) {
+                val pdfFile = PdfExporter.generatePdf(context, effectiveName, content)
+                pdfFile.readBytes()
+            } else {
+                content.toByteArray(Charsets.UTF_8)
+            }
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
-                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-                    put(MediaStore.Downloads.MIME_TYPE, mimeType)
+                    put(MediaStore.Downloads.DISPLAY_NAME, effectiveName)
+                    put(MediaStore.Downloads.MIME_TYPE, effectiveMime)
                     put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
                     put(MediaStore.Downloads.IS_PENDING, 1)
                 }
@@ -37,24 +48,24 @@ object FileExporter {
 
                 if (uri != null) {
                     context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                        outputStream.write(content.toByteArray(Charsets.UTF_8))
+                        outputStream.write(bytes)
                         outputStream.flush()
                     }
                     values.clear()
                     values.put(MediaStore.Downloads.IS_PENDING, 0)
                     context.contentResolver.update(uri, values, null, null)
-                    Toast.makeText(context, "$fileName İndirilenler klasörüne kaydedildi.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "$effectiveName İndirilenler klasörüne kaydedildi.", Toast.LENGTH_SHORT).show()
                     return true
                 }
             } else {
                 val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                 if (!downloadsDir.exists()) downloadsDir.mkdirs()
-                val targetFile = File(downloadsDir, fileName)
+                val targetFile = File(downloadsDir, effectiveName)
                 FileOutputStream(targetFile).use { fos ->
-                    fos.write(content.toByteArray(Charsets.UTF_8))
+                    fos.write(bytes)
                     fos.flush()
                 }
-                Toast.makeText(context, "$fileName İndirilenler klasörüne kaydedildi.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "$effectiveName İndirilenler klasörüne kaydedildi.", Toast.LENGTH_SHORT).show()
                 return true
             }
         } catch (e: Exception) {
@@ -70,11 +81,20 @@ object FileExporter {
         mimeType: String = "text/plain"
     ) {
         try {
-            val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
-            val tempFile = File(exportDir, fileName)
-            FileOutputStream(tempFile).use { fos ->
-                fos.write(content.toByteArray(Charsets.UTF_8))
-                fos.flush()
+            val isPdf = mimeType.equals("application/pdf", ignoreCase = true) || fileName.endsWith(".pdf", ignoreCase = true)
+            val effectiveMime = if (isPdf) "application/pdf" else mimeType
+            val effectiveName = if (isPdf && !fileName.endsWith(".pdf", ignoreCase = true)) "$fileName.pdf" else fileName
+
+            val tempFile = if (isPdf) {
+                PdfExporter.generatePdf(context, effectiveName, content)
+            } else {
+                val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+                val f = File(exportDir, effectiveName)
+                FileOutputStream(f).use { fos ->
+                    fos.write(content.toByteArray(Charsets.UTF_8))
+                    fos.flush()
+                }
+                f
             }
 
             val contentUri: Uri = FileProvider.getUriForFile(
@@ -84,15 +104,15 @@ object FileExporter {
             )
 
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = mimeType
+                type = effectiveMime
                 putExtra(Intent.EXTRA_STREAM, contentUri)
-                putExtra(Intent.EXTRA_SUBJECT, fileName)
-                putExtra(Intent.EXTRA_TEXT, content.take(500))
+                putExtra(Intent.EXTRA_SUBJECT, effectiveName)
+                putExtra(Intent.EXTRA_TEXT, if (isPdf) "Nöro Asistan tarafından hazırlanan $effectiveName belgesi ektedir." else content.take(500))
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
 
-            val chooser = Intent.createChooser(shareIntent, "Dosyayı Paylaş: $fileName").apply {
+            val chooser = Intent.createChooser(shareIntent, "Dosyayı Paylaş: $effectiveName").apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(chooser)
@@ -152,6 +172,7 @@ object FileExporter {
 
             // 3. Any standard code or markup block -> ALWAYS convert to downloadable file
             val (name, ext) = when (tag) {
+                "pdf" -> (if (fileCount == 1) "dokuman.pdf" else "dokuman_$fileCount.pdf") to "pdf"
                 "html", "htm" -> (if (fileCount == 1) "index.html" else "sayfa_$fileCount.html") to "html"
                 "svg" -> (if (fileCount == 1) "cizim.svg" else "cizim_$fileCount.svg") to "svg"
                 "py", "python" -> (if (fileCount == 1) "script.py" else "script_$fileCount.py") to "py"
@@ -186,6 +207,7 @@ object FileExporter {
                     header.startsWith("file:", ignoreCase = true) -> header.substringAfter("file:").trim()
                     header.startsWith("download:", ignoreCase = true) -> header.substringAfter("download:").trim()
                     header.contains(":") -> header.substringAfter(":").trim()
+                    header.equals("pdf", ignoreCase = true) -> "dokuman.pdf"
                     header.equals("html", ignoreCase = true) || header.equals("htm", ignoreCase = true) -> "index.html"
                     header.equals("svg", ignoreCase = true) -> "cizim.svg"
                     header.equals("py", ignoreCase = true) || header.equals("python", ignoreCase = true) -> "script.py"
@@ -226,7 +248,7 @@ object FileExporter {
                 file.content.trim() == code || (explicitName.isNotBlank() && file.fileName.equals(explicitName, ignoreCase = true))
             }
 
-            if (isExtracted || tag in listOf("file", "download", "html", "htm", "svg", "css", "js", "javascript", "python", "py", "kotlin", "kt", "json", "txt", "text")) {
+            if (isExtracted || tag in listOf("file", "download", "pdf", "html", "htm", "svg", "css", "js", "javascript", "python", "py", "kotlin", "kt", "json", "txt", "text")) {
                 "" // Strip all code blocks completely
             } else {
                 matchResult.value
