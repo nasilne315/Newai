@@ -65,22 +65,6 @@ fun ApiKeyDialog(
     var key1 by remember { mutableStateOf(status.key1) }
     var key2 by remember { mutableStateOf(status.key2) }
     var key3 by remember { mutableStateOf(status.key3) }
-    var selectedModel by remember {
-        mutableStateOf(
-            when {
-                status.selectedModel.contains("1.5") || status.selectedModel.isBlank() -> "gemini-2.0-flash-lite"
-                else -> status.selectedModel
-            }
-        )
-    }
-
-    val modelOptions = listOf(
-        Triple("gemini-2.0-flash-lite", "Flash Lite Latest", "En Hızlı • Önerilen"),
-        Triple("gemini-flash-lite-latest", "Flash Lite Alias", "Otomatik Güncel"),
-        Triple("gemini-2.0-flash", "Gemini 2.0 Flash", "Standart Flash"),
-        Triple("gemini-2.5-pro", "Gemini Pro", "Karmaşık Mantık")
-    )
-
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = DarkSurface,
@@ -104,12 +88,12 @@ fun ApiKeyDialog(
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
-                        text = "API & Model Ayarları",
+                        text = "API Anahtarları Havuzu",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                         color = TextPrimary
                     )
                     Text(
-                        text = "Flash Lite Latest • Ultra Hızlı & Otomatik Havuz",
+                        text = "Flash Lite Latest • Ultra Hızlı Otomatik Havuz",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFF60A5FA)
                     )
@@ -160,68 +144,45 @@ fun ApiKeyDialog(
 
                 Spacer(modifier = Modifier.height(2.dp))
 
-                Text(
-                    text = "Aktif Yapay Zeka Modeli",
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                    color = TextSecondary
-                )
-
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                // Locked single model badge (Flash Lite Latest)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = DarkBg,
+                    border = BorderStroke(1.dp, Color(0xFF1E3A8A).copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    modelOptions.forEach { (modelId, title, subtitle) ->
-                        val isSelected = selectedModel == modelId
-                        Surface(
-                            onClick = { selectedModel = modelId },
-                            shape = RoundedCornerShape(10.dp),
-                            color = if (isSelected) Color(0xFF1E293B) else DarkBg,
-                            border = BorderStroke(
-                                1.dp,
-                                if (isSelected) Color(0xFF60A5FA) else DarkBorder
-                            ),
-                            modifier = Modifier.fillMaxWidth()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1E3A8A)),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Bolt,
-                                        contentDescription = null,
-                                        tint = if (isSelected) Color(0xFF60A5FA) else TextMuted,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Column {
-                                        Text(
-                                            text = title,
-                                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                                            color = if (isSelected) TextPrimary else TextSecondary
-                                        )
-                                        Text(
-                                            text = subtitle,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (isSelected) Color(0xFF93C5FD) else TextMuted
-                                        )
-                                    }
-                                }
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.CheckCircle,
-                                        contentDescription = null,
-                                        tint = Color(0xFF60A5FA),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
+                            Icon(
+                                imageVector = Icons.Rounded.Bolt,
+                                contentDescription = null,
+                                tint = Color(0xFF60A5FA),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Model: Gemini Flash Lite Latest",
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = "Kilitli ve optimize tek model • Ultra hızlı yanıt",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextMuted
+                            )
                         }
                     }
                 }
@@ -230,7 +191,7 @@ fun ApiKeyDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    onSaveKeys(key1, key2, key3, selectedModel)
+                    onSaveKeys(key1, key2, key3, "gemini-2.0-flash-lite")
                     onDismiss()
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = SendButtonDarkBlue),

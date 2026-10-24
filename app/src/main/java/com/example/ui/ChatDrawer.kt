@@ -117,7 +117,7 @@ fun ChatDrawerContent(
                             color = TextPrimary
                         )
                         Text(
-                            text = "Gemini 2.0 Flash • Canlı Web",
+                            text = "Flash Lite Latest • Canlı Web",
                             style = MaterialTheme.typography.labelSmall,
                             color = TextMuted
                         )

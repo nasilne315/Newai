@@ -43,17 +43,22 @@ import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -793,10 +798,12 @@ fun CompanionScreen(
                                     )
                                 }
                             } else {
-                                FormattedAiContent(
-                                    text = speechText,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                SelectionContainer {
+                                    FormattedAiContent(
+                                        text = speechText,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
                             }
                         }
                     }
@@ -942,6 +949,10 @@ fun CompanionScreen(
 @Composable
 private fun CompanionMessageItem(message: ChatMessage) {
     val isUser = message.sender == MessageSender.USER
+    val clipboardManager = LocalClipboardManager.current
+    var isCopied by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
@@ -953,16 +964,54 @@ private fun CompanionMessageItem(message: ChatMessage) {
             modifier = Modifier.widthIn(max = 300.dp)
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    text = if (isUser) "Sen" else "Lynia",
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                    color = if (isUser) Color(0xFF93C5FD) else AccentCyan
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isUser) "Sen" else "Lynia",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = if (isUser) Color(0xFF93C5FD) else AccentCyan
+                    )
+
+                    if (message.text.isNotBlank()) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable {
+                                    clipboardManager.setText(AnnotatedString(message.text))
+                                    isCopied = true
+                                    coroutineScope.launch {
+                                        kotlinx.coroutines.delay(2000)
+                                        isCopied = false
+                                    }
+                                }
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isCopied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                                contentDescription = "Kopyala",
+                                tint = if (isCopied) Color(0xFF10B981) else TextMuted,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = if (isCopied) "Kopyalandı" else "Kopyala",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                color = if (isCopied) Color(0xFF10B981) else TextMuted
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(4.dp))
-                FormattedAiContent(
-                    text = message.text,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                SelectionContainer {
+                    FormattedAiContent(
+                        text = message.text,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
     }

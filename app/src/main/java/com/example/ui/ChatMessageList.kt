@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
@@ -304,33 +305,113 @@ private fun UserMessageItem(
     message: ChatMessage,
     modifier: Modifier = Modifier
 ) {
+    var copiedToClipboard by remember { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
+    val coroutineScope = rememberCoroutineScope()
+
     Box(
         modifier = modifier
             .fillMaxWidth()
             .testTag("user_message_row"),
         contentAlignment = Alignment.CenterEnd
     ) {
-        Surface(
-            shape = RoundedCornerShape(
-                topStart = 20.dp,
-                topEnd = 20.dp,
-                bottomStart = 20.dp,
-                bottomEnd = 6.dp
-            ),
-            color = UserBubbleDarkBlue,
-            border = BorderStroke(1.dp, UserBubbleDarkBlueBorder),
-            modifier = Modifier
-                .widthIn(max = 330.dp)
-                .testTag("user_message_bubble")
+        Column(
+            horizontalAlignment = Alignment.End,
+            modifier = Modifier.widthIn(max = 330.dp)
         ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            Surface(
+                shape = RoundedCornerShape(
+                    topStart = 20.dp,
+                    topEnd = 20.dp,
+                    bottomStart = 20.dp,
+                    bottomEnd = 6.dp
+                ),
+                color = UserBubbleDarkBlue,
+                border = BorderStroke(1.dp, UserBubbleDarkBlueBorder),
+                modifier = Modifier.testTag("user_message_bubble")
             ) {
-                val attached = message.attachedFile
-                if (attached != null) {
-                    if (attached.isImage) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    val attached = message.attachedFile
+                    if (attached != null) {
+                        if (attached.isImage) {
+                            AsyncImage(
+                                model = attached.uri,
+                                contentDescription = "User image",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(180.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .padding(bottom = 8.dp),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF0F2342))
+                                    .border(BorderStroke(1.dp, Color(0xFF1E3A5F)), RoundedCornerShape(10.dp))
+                                    .padding(8.dp)
+                            ) {
+                                if (attached.isPdf) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(Color(0xFFDC2626)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.PictureAsPdf,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(Color(0xFF2563EB)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Description,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f, fill = false)) {
+                                    Text(
+                                        text = attached.name,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                        color = TextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (attached.formattedSize.isNotBlank()) {
+                                        Text(
+                                            text = attached.formattedSize,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = TextSecondary
+                                        )
+                                    }
+                                }
+                            }
+                            if (message.text.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                        }
+                    } else if (message.imageUri != null) {
                         AsyncImage(
-                            model = attached.uri,
+                            model = message.imageUri,
                             contentDescription = "User image",
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -339,89 +420,53 @@ private fun UserMessageItem(
                                 .padding(bottom = 8.dp),
                             contentScale = ContentScale.Crop
                         )
-                    } else {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0xFF0F2342))
-                                .border(BorderStroke(1.dp, Color(0xFF1E3A5F)), RoundedCornerShape(10.dp))
-                                .padding(8.dp)
-                        ) {
-                            if (attached.isPdf) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Color(0xFFDC2626)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.PictureAsPdf,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Color(0xFF2563EB)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Description,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f, fill = false)) {
-                                Text(
-                                    text = attached.name,
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                                    color = TextPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                if (attached.formattedSize.isNotBlank()) {
-                                    Text(
-                                        text = attached.formattedSize,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = TextSecondary
-                                    )
-                                }
-                            }
-                        }
-                        if (message.text.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    if (message.text.isNotBlank()) {
+                        SelectionContainer {
+                            Text(
+                                text = message.text,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = 15.sp,
+                                    lineHeight = 22.sp
+                                ),
+                                color = TextPrimary
+                            )
                         }
                     }
-                } else if (message.imageUri != null) {
-                    AsyncImage(
-                        model = message.imageUri,
-                        contentDescription = "User image",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(180.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .padding(bottom = 8.dp),
-                        contentScale = ContentScale.Crop
-                    )
                 }
-                if (message.text.isNotBlank()) {
+            }
+
+            // Copy user message button
+            if (message.text.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(DarkSurface)
+                        .border(BorderStroke(1.dp, DarkBorder), RoundedCornerShape(8.dp))
+                        .clickable {
+                            clipboardManager.setText(AnnotatedString(message.text))
+                            copiedToClipboard = true
+                            coroutineScope.launch {
+                                delay(2000)
+                                copiedToClipboard = false
+                            }
+                        }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .testTag("copy_user_message_button_${message.id}")
+                ) {
+                    Icon(
+                        imageVector = if (copiedToClipboard) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                        contentDescription = "Mesajımı kopyala",
+                        tint = if (copiedToClipboard) Color(0xFF10B981) else TextSecondary,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
                     Text(
-                        text = message.text,
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = 15.sp,
-                            lineHeight = 22.sp
-                        ),
-                        color = TextPrimary
+                        text = if (copiedToClipboard) "Kopyalandı" else "Kopyala",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                        color = if (copiedToClipboard) Color(0xFF10B981) else TextSecondary
                     )
                 }
             }
@@ -525,25 +570,29 @@ private fun AiMessageItem(
                             exit = fadeOut() + shrinkVertically()
                         ) {
                             Column(modifier = Modifier.padding(top = 8.dp)) {
-                                Text(
-                                    text = message.thinkingProcess,
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        lineHeight = 18.sp
-                                    ),
-                                    color = TextSecondary
-                                )
+                                SelectionContainer {
+                                    Text(
+                                        text = message.thinkingProcess,
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            lineHeight = 18.sp
+                                        ),
+                                        color = TextSecondary
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // Message Body
+            // Message Body (Wrapped in SelectionContainer for arbitrary text selection)
             if (displayText.isNotBlank()) {
-                FormattedAiContent(
-                    text = displayText,
-                    modifier = Modifier.testTag("ai_plain_text_message")
-                )
+                SelectionContainer {
+                    FormattedAiContent(
+                        text = displayText,
+                        modifier = Modifier.testTag("ai_plain_text_message")
+                    )
+                }
             } else if (message.text.isEmpty() && message.isStreaming) {
                 AiLoadingItem()
             }
