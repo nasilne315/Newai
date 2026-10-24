@@ -52,6 +52,10 @@ import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.rounded.Bolt
+
 @Composable
 fun ApiKeyDialog(
     status: ApiKeyStatus,
@@ -61,7 +65,21 @@ fun ApiKeyDialog(
     var key1 by remember { mutableStateOf(status.key1) }
     var key2 by remember { mutableStateOf(status.key2) }
     var key3 by remember { mutableStateOf(status.key3) }
-    val selectedModel = status.selectedModel.ifEmpty { "gemini-2.0-flash-lite" }
+    var selectedModel by remember {
+        mutableStateOf(
+            when {
+                status.selectedModel.contains("1.5") || status.selectedModel.isBlank() -> "gemini-2.0-flash-lite"
+                else -> status.selectedModel
+            }
+        )
+    }
+
+    val modelOptions = listOf(
+        Triple("gemini-2.0-flash-lite", "Flash Lite Latest", "En Hızlı • Önerilen"),
+        Triple("gemini-flash-lite-latest", "Flash Lite Alias", "Otomatik Güncel"),
+        Triple("gemini-2.0-flash", "Gemini 2.0 Flash", "Standart Flash"),
+        Triple("gemini-2.5-pro", "Gemini Pro", "Karmaşık Mantık")
+    )
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -86,12 +104,12 @@ fun ApiKeyDialog(
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
-                        text = "API Anahtarı Ayarları",
+                        text = "API & Model Ayarları",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                         color = TextPrimary
                     )
                     Text(
-                        text = "Gemini 2.0 Flash-Lite (Ultra Hızlı) • Otomatik Havuz",
+                        text = "Flash Lite Latest • Ultra Hızlı & Otomatik Havuz",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFF60A5FA)
                     )
@@ -102,17 +120,16 @@ fun ApiKeyDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "3 API anahtarı havuzu (429 rate-limit durumunda otomatik devir).",
+                    text = "3 API anahtarı havuzu (429/503 durumunda otomatik devir).",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextMuted,
                     lineHeight = 16.sp
                 )
-
-                Spacer(modifier = Modifier.height(4.dp))
 
                 // Key 1 Field
                 ApiKeyInputField(
@@ -140,6 +157,74 @@ fun ApiKeyDialog(
                     isActive = status.activeIndex == 2 && key3.isNotBlank(),
                     tag = "api_key_3_input"
                 )
+
+                Spacer(modifier = Modifier.height(2.dp))
+
+                Text(
+                    text = "Aktif Yapay Zeka Modeli",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = TextSecondary
+                )
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    modelOptions.forEach { (modelId, title, subtitle) ->
+                        val isSelected = selectedModel == modelId
+                        Surface(
+                            onClick = { selectedModel = modelId },
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSelected) Color(0xFF1E293B) else DarkBg,
+                            border = BorderStroke(
+                                1.dp,
+                                if (isSelected) Color(0xFF60A5FA) else DarkBorder
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Bolt,
+                                        contentDescription = null,
+                                        tint = if (isSelected) Color(0xFF60A5FA) else TextMuted,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = title,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                            color = if (isSelected) TextPrimary else TextSecondary
+                                        )
+                                        Text(
+                                            text = subtitle,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (isSelected) Color(0xFF93C5FD) else TextMuted
+                                        )
+                                    }
+                                }
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.CheckCircle,
+                                        contentDescription = null,
+                                        tint = Color(0xFF60A5FA),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
         confirmButton = {

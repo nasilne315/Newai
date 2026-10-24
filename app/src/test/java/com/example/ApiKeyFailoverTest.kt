@@ -49,7 +49,15 @@ class ApiKeyFailoverTest {
     fun testModelSelection() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val manager = ApiKeyManager(context)
+        manager.setSelectedModel("gemini-2.0-flash-lite")
+        assertEquals("gemini-2.0-flash-lite", manager.status.value.selectedModel)
+
+        // Deprecated 1.5 flash is automatically sanitized/migrated to modern flash-lite
         manager.setSelectedModel("gemini-1.5-flash")
-        assertEquals("gemini-1.5-flash", manager.status.value.selectedModel)
+        assertEquals("gemini-2.0-flash-lite", manager.status.value.selectedModel)
+
+        // Flash lite latest alias
+        manager.setSelectedModel("flash lite latest")
+        assertEquals("gemini-flash-lite-latest", manager.status.value.selectedModel)
     }
 }

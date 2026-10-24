@@ -20,6 +20,14 @@ data class GeminiModel(
     val allowedResolutions: List<String> = emptyList()
 ) {
     companion object {
+        val GEMINI_FLASH_LITE_LATEST = GeminiModel(
+            id = "gemini-2.0-flash-lite",
+            name = "Gemini Flash Lite (Latest)",
+            tag = "Ultra Fast",
+            category = ModelCategory.FAST,
+            description = "En güncel ve ultra hızlı Flash Lite sürümü"
+        )
+        val GEMINI_31_FLASH_LITE = GEMINI_FLASH_LITE_LATEST
         val GEMINI_35_FLASH = GeminiModel(
             id = "gemini-2.0-flash",
             name = "Gemini 2.0 Flash",
@@ -37,17 +45,10 @@ data class GeminiModel(
             description = "Complex reasoning and math with thinking",
             supportsThinking = true
         )
-        val GEMINI_31_FLASH_LITE = GeminiModel(
-            id = "gemini-2.5-flash-lite",
-            name = "Gemini Flash Lite",
-            tag = "Ultra Fast",
-            category = ModelCategory.FAST,
-            description = "Lightweight and instant response generation"
-        )
         val ALL_MODELS = listOf(
+            GEMINI_FLASH_LITE_LATEST,
             GEMINI_38_FLASH,
-            GEMINI_4_ARGON,
-            GEMINI_31_FLASH_LITE
+            GEMINI_4_ARGON
         )
     }
 }

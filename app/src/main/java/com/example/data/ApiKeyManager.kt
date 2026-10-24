@@ -38,7 +38,11 @@ class ApiKeyManager(context: Context) {
         val key3 = storedKey3.ifEmpty { buildKey3 }
 
         val active = prefs.getInt("active_key_index", 0)
-        val model = prefs.getString("selected_model", "gemini-2.0-flash-lite") ?: "gemini-2.0-flash-lite"
+        val rawModel = prefs.getString("selected_model", "gemini-2.0-flash-lite") ?: "gemini-2.0-flash-lite"
+        val model = sanitizeModel(rawModel)
+        if (model != rawModel) {
+            prefs.edit().putString("selected_model", model).apply()
+        }
 
         return ApiKeyStatus(
             key1 = key1,
@@ -47,6 +51,17 @@ class ApiKeyManager(context: Context) {
             activeIndex = active.coerceIn(0, 2),
             selectedModel = model
         )
+    }
+
+    private fun sanitizeModel(model: String?): String {
+        val trimmed = model?.trim().orEmpty()
+        return when {
+            trimmed.isEmpty() -> "gemini-2.0-flash-lite"
+            trimmed.contains("1.5") -> "gemini-2.0-flash-lite"
+            trimmed == "flash lite latest" || trimmed == "flash-lite-latest" -> "gemini-flash-lite-latest"
+            trimmed == "flash lite" || trimmed == "flash-lite" -> "gemini-2.0-flash-lite"
+            else -> trimmed
+        }
     }
 
     private fun getBuildConfigString(fieldName: String): String {
@@ -63,7 +78,7 @@ class ApiKeyManager(context: Context) {
         val clean1 = k1.trim()
         val clean2 = k2.trim()
         val clean3 = k3.trim()
-        val targetModel = (model ?: _status.value.selectedModel).trim().ifEmpty { "gemini-2.0-flash-lite" }
+        val targetModel = sanitizeModel(model ?: _status.value.selectedModel)
 
         prefs.edit()
             .putString("api_key_1", clean1)
@@ -82,7 +97,7 @@ class ApiKeyManager(context: Context) {
     }
 
     fun setSelectedModel(model: String) {
-        val cleanModel = model.trim().ifEmpty { "gemini-2.0-flash-lite" }
+        val cleanModel = sanitizeModel(model)
         prefs.edit().putString("selected_model", cleanModel).apply()
         _status.value = _status.value.copy(selectedModel = cleanModel)
     }

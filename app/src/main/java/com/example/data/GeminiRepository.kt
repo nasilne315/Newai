@@ -53,14 +53,13 @@ class GeminiRepository(private val context: Context) {
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
-    // Candidate models to automatically cycle through for maximum speed and reliability
+    // Candidate models to automatically cycle through for maximum speed and reliability (Flash Lite Latest prioritized)
     private val candidateModels = listOf(
         "gemini-2.0-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-2.5-flash",
-        "gemini-1.5-flash",
         "gemini-flash-lite-latest",
-        "gemini-1.5-flash-latest"
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-2.5-flash"
     )
 
     /**
@@ -114,7 +113,7 @@ class GeminiRepository(private val context: Context) {
                 StreamUpdate(
                     accumulatedText = "Merhaba! Sohbet sistemi hazır.\n\n" +
                             "3 API anahtarı tanımlamak için sağ üstteki 3 nokta menüsünden 'API & Model Ayarları' seçeneğine tıklayabilirsiniz. " +
-                            "Model olarak gemini-2.0-flash-lite kullanılmaktadır.",
+                            "Model olarak Gemini Flash-Lite Latest (gemini-2.0-flash-lite) kullanılmaktadır.",
                     failoverNotice = null,
                     isDone = true
                 )
@@ -130,7 +129,7 @@ class GeminiRepository(private val context: Context) {
         // and switch to flash when full file editing or heavy code is detected
         val isFileTask = attachedFile != null || isPromptRelatedToFiles(userPrompt, attachedFile)
         val defaultModel = apiKeyManager.status.value.selectedModel.ifEmpty { "gemini-2.0-flash-lite" }
-        val preferred = if (isFileTask && defaultModel == "gemini-2.0-flash-lite") "gemini-2.0-flash" else defaultModel
+        val preferred = if (isFileTask && (defaultModel.contains("flash-lite") || defaultModel.contains("lite"))) "gemini-2.0-flash" else defaultModel
 
         val modelsToTry = (listOf(preferred) + candidateModels).distinct()
 
@@ -360,7 +359,7 @@ class GeminiRepository(private val context: Context) {
 
         val isFileTask = attachedFile != null || isPromptRelatedToFiles(userPrompt, attachedFile)
         val defaultModel = apiKeyManager.status.value.selectedModel.ifEmpty { "gemini-2.0-flash-lite" }
-        val preferred = if (isFileTask && defaultModel == "gemini-2.0-flash-lite") "gemini-2.0-flash" else defaultModel
+        val preferred = if (isFileTask && (defaultModel.contains("flash-lite") || defaultModel.contains("lite"))) "gemini-2.0-flash" else defaultModel
         val modelsToTry = (listOf(preferred) + candidateModels).distinct()
 
         var useSearchGrounding = isSearchWarranted(userPrompt)
