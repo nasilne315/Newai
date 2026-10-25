@@ -31,6 +31,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.AttachFile
@@ -48,26 +50,41 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import com.example.model.AttachedFile
 import com.example.ui.theme.DarkBorder
 import com.example.ui.theme.DarkSurfaceVariant
@@ -167,11 +184,36 @@ fun ChatInputBar(
         label = "micPulse"
     )
 
+    val focusRequester = remember { FocusRequester() }
+    val coroutineScope = rememberCoroutineScope()
+
     val canSend = (inputText.isNotBlank() || attachedFile != null) && !isLoading
     val sendButtonColor by animateColorAsState(
         targetValue = if (canSend) SendButtonDarkBlue else SendButtonDisabled,
         label = "sendButtonColor"
     )
+
+    val handleSendMessage: () -> Unit = {
+        if (canSend) {
+            onSendMessage()
+            coroutineScope.launch {
+                // Automatically retain focus in the text field after sending
+                delay(50)
+                try {
+                    focusRequester.requestFocus()
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // Keep focus retained whenever loading completes so the user never has to click again
+    LaunchedEffect(isLoading) {
+        if (!isLoading) {
+            try {
+                focusRequester.requestFocus()
+            } catch (_: Exception) {}
+        }
+    }
 
     Box(
         modifier = modifier
@@ -275,6 +317,7 @@ fun ChatInputBar(
                                 modifier = Modifier
                                     .size(20.dp)
                                     .clip(CircleShape)
+                                    .pointerHoverIcon(PointerIcon.Hand)
                                     .clickable { onRemoveAttachedFile() }
                             )
                         }
@@ -313,24 +356,53 @@ fun ChatInputBar(
                 BasicTextField(
                     value = inputText,
                     onValueChange = onInputTextChanged,
-                    enabled = !isLoading,
+                    enabled = true,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp)
+                        .focusRequester(focusRequester)
+                        .pointerHoverIcon(PointerIcon.Text)
+                        .onPreviewKeyEvent { event ->
+                            val isEnter = event.key == Key.Enter || event.key == Key.NumPadEnter
+                            if (isEnter) {
+                                if (!event.isShiftPressed) {
+                                    // Hardware Enter key sends message immediately without newline
+                                    if (event.type == KeyEventType.KeyDown && canSend) {
+                                        handleSendMessage()
+                                    }
+                                    true
+                                } else {
+                                    // Shift+Enter inserts a new line
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        }
                         .testTag("chat_input_text_field"),
                     textStyle = TextStyle(
-                        color = if (!isLoading) TextPrimary else TextSecondary,
+                        color = TextPrimary,
                         fontSize = 16.sp,
                         lineHeight = 22.sp
                     ),
                     cursorBrush = SolidColor(TextPrimary),
                     maxLines = 6,
+                    keyboardOptions = KeyboardOptions(
+                        imeAction = ImeAction.Send
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onSend = {
+                            if (canSend) {
+                                handleSendMessage()
+                            }
+                        }
+                    ),
                     decorationBox = { innerTextField ->
                         if (inputText.isEmpty() && !isRecordingVoice) {
                             Text(
-                                text = if (isLoading) "Yapay zeka yanıtlıyor, lütfen bekleyin..." else "Bir mesaj yazın veya sesli konuşun...",
+                                text = if (isLoading) "Yapay zeka yanıtlıyor... (yazmaya devam edebilirsiniz)" else "Bir mesaj yazın veya sesli konuşun...",
                                 style = TextStyle(
-                                    color = if (isLoading) TextSecondary.copy(alpha = 0.6f) else TextMuted,
+                                    color = if (isLoading) TextSecondary.copy(alpha = 0.7f) else TextMuted,
                                     fontSize = 15.sp
                                 )
                             )
@@ -354,6 +426,7 @@ fun ChatInputBar(
                             enabled = !isLoading,
                             modifier = Modifier
                                 .size(36.dp)
+                                .pointerHoverIcon(if (!isLoading) PointerIcon.Hand else PointerIcon.Default)
                                 .testTag("attach_file_button")
                         ) {
                             Icon(
@@ -379,6 +452,7 @@ fun ChatInputBar(
                             enabled = !isLoading,
                             modifier = Modifier
                                 .size(36.dp)
+                                .pointerHoverIcon(if (!isLoading) PointerIcon.Hand else PointerIcon.Default)
                                 .testTag("camera_button")
                         ) {
                             Icon(
@@ -394,6 +468,7 @@ fun ChatInputBar(
                             enabled = !isLoading,
                             modifier = Modifier
                                 .size(36.dp)
+                                .pointerHoverIcon(if (!isLoading) PointerIcon.Hand else PointerIcon.Default)
                                 .testTag("web_search_toggle_button")
                         ) {
                             Box(
@@ -437,6 +512,7 @@ fun ChatInputBar(
                             modifier = Modifier
                                 .size(36.dp)
                                 .scale(micScale)
+                                .pointerHoverIcon(if (!isLoading) PointerIcon.Hand else PointerIcon.Default)
                                 .testTag("voice_to_text_button")
                         ) {
                             if (isRecordingVoice) {
@@ -471,7 +547,8 @@ fun ChatInputBar(
                                 .size(38.dp)
                                 .clip(CircleShape)
                                 .background(sendButtonColor)
-                                .clickable(enabled = canSend, onClick = onSendMessage)
+                                .pointerHoverIcon(if (canSend) PointerIcon.Hand else PointerIcon.Default)
+                                .clickable(enabled = canSend, onClick = handleSendMessage)
                                 .testTag("send_button"),
                             contentAlignment = Alignment.Center
                         ) {

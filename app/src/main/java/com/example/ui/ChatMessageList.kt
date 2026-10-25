@@ -67,6 +67,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -271,6 +273,7 @@ private fun SuggestionItem(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
+            .pointerHoverIcon(PointerIcon.Hand)
             .clickable(onClick = onClick)
     ) {
         Row(
@@ -445,6 +448,7 @@ private fun UserMessageItem(
                         .clip(RoundedCornerShape(8.dp))
                         .background(DarkSurface)
                         .border(BorderStroke(1.dp, DarkBorder), RoundedCornerShape(8.dp))
+                        .pointerHoverIcon(PointerIcon.Hand)
                         .clickable {
                             clipboardManager.setText(AnnotatedString(message.text))
                             copiedToClipboard = true
@@ -650,6 +654,7 @@ private fun AiMessageItem(
                             .clip(RoundedCornerShape(8.dp))
                             .background(DarkSurface)
                             .border(BorderStroke(1.dp, DarkBorder), RoundedCornerShape(8.dp))
+                            .pointerHoverIcon(PointerIcon.Hand)
                             .clickable {
                                 clipboardManager.setText(AnnotatedString(message.text))
                                 copiedToClipboard = true
@@ -686,6 +691,7 @@ private fun AiMessageItem(
                                 BorderStroke(1.dp, if (isThisSpeaking) Color(0xFF10B981) else DarkBorder),
                                 RoundedCornerShape(8.dp)
                             )
+                            .pointerHoverIcon(PointerIcon.Hand)
                             .clickable { onToggleSpeak(displayText, message.id) }
                             .padding(horizontal = 8.dp, vertical = 5.dp)
                             .testTag("tts_button_${message.id}")
@@ -712,6 +718,7 @@ private fun AiMessageItem(
                             border = BorderStroke(1.dp, if (isSourcesExpanded) Color(0xFF38BDF8) else DarkBorder),
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
+                                .pointerHoverIcon(PointerIcon.Hand)
                                 .clickable { isSourcesExpanded = !isSourcesExpanded }
                                 .testTag("sources_toggle_button")
                         ) {
