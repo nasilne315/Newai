@@ -16,6 +16,7 @@ data class ChatMessage(
     val text: String,
     val imageUri: String? = null,
     val attachedFile: AttachedFile? = null,
+    val attachedFiles: List<AttachedFile> = emptyList(),
     val isImageGeneration: Boolean = false,
     val modelId: String? = null,
     val modelDisplayName: String? = null,
@@ -26,4 +27,7 @@ data class ChatMessage(
     val generatedFiles: List<GeneratedFile> = emptyList(),
     val timestamp: Long = System.currentTimeMillis(),
     val isStreaming: Boolean = false
-)
+) {
+    val allAttachedFiles: List<AttachedFile>
+        get() = if (attachedFiles.isNotEmpty()) attachedFiles else listOfNotNull(attachedFile)
+}

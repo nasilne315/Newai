@@ -47,6 +47,7 @@ data class PredictiveChatCache(
 data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val inputText: String = "",
+    val attachedFiles: List<AttachedFile> = emptyList(),
     val attachedFile: AttachedFile? = null,
     val isLoading: Boolean = false,
     val isRecordingVoice: Boolean = false,
@@ -224,12 +225,42 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun attachFiles(files: List<AttachedFile>) {
+        if (files.isEmpty()) return
+        _uiState.update { current ->
+            val merged = (current.attachedFiles + files).distinctBy { it.name }
+            current.copy(
+                attachedFiles = merged,
+                attachedFile = merged.firstOrNull()
+            )
+        }
+    }
+
     fun attachFile(file: AttachedFile?) {
-        _uiState.update { it.copy(attachedFile = file) }
+        if (file == null) {
+            removeAttachedFile()
+        } else {
+            attachFiles(listOf(file))
+        }
+    }
+
+    fun removeAttachedFile(file: AttachedFile) {
+        _uiState.update { current ->
+            val updated = current.attachedFiles.filter { it.name != file.name }
+            current.copy(
+                attachedFiles = updated,
+                attachedFile = updated.firstOrNull()
+            )
+        }
     }
 
     fun removeAttachedFile() {
-        _uiState.update { it.copy(attachedFile = null) }
+        _uiState.update { current ->
+            current.copy(
+                attachedFiles = emptyList(),
+                attachedFile = null
+            )
+        }
     }
 
     fun setDrawerOpen(isOpen: Boolean) {
@@ -376,6 +407,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 messages = emptyList(),
                 inputText = "",
+                attachedFiles = emptyList(),
                 attachedFile = null,
                 currentSessionId = java.util.UUID.randomUUID().toString(),
                 isMoreMenuOpen = false
@@ -405,6 +437,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     messages = loaded,
                     currentSessionId = sessionId,
                     inputText = "",
+                    attachedFiles = emptyList(),
                     attachedFile = null,
                     isMoreMenuOpen = false
                 )
@@ -437,10 +470,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun sendMessage(customPrompt: String? = null) {
         val currentState = _uiState.value
         val text = (customPrompt ?: currentState.inputText).trim()
-        val attachedFile = currentState.attachedFile
+        val attachedFiles = currentState.attachedFiles.ifEmpty { listOfNotNull(currentState.attachedFile) }
 
-        if (text.isEmpty() && attachedFile == null) return
+        if (text.isEmpty() && attachedFiles.isEmpty()) return
         if (currentState.isLoading) return
+
+        val totalSize = attachedFiles.sumOf { it.sizeBytes }
+        if (totalSize > 35 * 1024 * 1024) {
+            _uiState.update {
+                it.copy(
+                    errorMessage = "Eklenen dosyaların toplam boyutu çok büyük. Maksimum toplam dosya boyutu 35 MB'dir."
+                )
+            }
+            return
+        }
 
         if (currentState.isRecordingVoice) {
             speechToTextManager.stopListening()
@@ -452,15 +495,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val userMessage = ChatMessage(
             sender = MessageSender.USER,
             text = text,
-            attachedFile = attachedFile,
-            imageUri = if (attachedFile?.isImage == true) attachedFile.uri else null
+            attachedFiles = attachedFiles,
+            attachedFile = attachedFiles.firstOrNull(),
+            imageUri = attachedFiles.firstOrNull { it.isImage }?.uri
         )
 
         val aiMessageId = java.util.UUID.randomUUID().toString()
 
         // Check if predictive background answer was already formulated while the user was typing!
         val cached = predictiveChatCache
-        val isCacheMatch = (attachedFile == null) &&
+        val isCacheMatch = (attachedFiles.isEmpty()) &&
                 (cached != null) &&
                 cached.prompt.equals(text, ignoreCase = true) &&
                 (cached.error == null)
@@ -498,6 +542,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         messages = updatedMessages,
                         inputText = "",
+                        attachedFiles = emptyList(),
                         attachedFile = null,
                         isLoading = false,
                         errorMessage = null,
@@ -534,6 +579,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         messages = updatedMessages,
                         inputText = "",
+                        attachedFiles = emptyList(),
                         attachedFile = null,
                         isLoading = true,
                         errorMessage = null,
@@ -563,6 +609,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 messages = updatedMessages,
                 inputText = "",
+                attachedFiles = emptyList(),
                 attachedFile = null,
                 isLoading = true,
                 errorMessage = null,
@@ -575,7 +622,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.sendMessageStream(
                 userPrompt = text,
-                attachedFile = attachedFile,
+                attachedFiles = attachedFiles,
                 conversationHistory = currentState.messages + userMessage,
                 persona = currentState.activePersona,
                 isWebSearchEnabled = currentState.isWebSearchEnabled

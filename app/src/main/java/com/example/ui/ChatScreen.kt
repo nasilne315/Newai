@@ -1,26 +1,46 @@
 package com.example.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,10 +48,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.model.GeneratedFile
 import com.example.ui.theme.DarkBg
+import com.example.ui.theme.DarkBorder
+import com.example.ui.theme.DarkSurfaceVariant
+import com.example.ui.theme.TextPrimary
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -200,13 +226,67 @@ fun ChatScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
+                    // Animated scroll-to-bottom arrow button when user scrolls up
+                    val showScrollToBottom by remember {
+                        derivedStateOf {
+                            listState.canScrollForward
+                        }
+                    }
+
+                    AnimatedVisibility(
+                        visible = showScrollToBottom,
+                        enter = fadeIn() + expandVertically(expandFrom = Alignment.Bottom),
+                        exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Bottom),
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 100.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = DarkSurfaceVariant,
+                            border = BorderStroke(1.dp, DarkBorder),
+                            shadowElevation = 8.dp,
+                            modifier = Modifier
+                                .pointerHoverIcon(PointerIcon.Hand)
+                                .clickable {
+                                    coroutineScope.launch {
+                                        if (uiState.messages.isNotEmpty()) {
+                                            listState.animateScrollToItem(uiState.messages.size)
+                                        }
+                                    }
+                                }
+                                .testTag("scroll_to_bottom_button")
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.ArrowDownward,
+                                    contentDescription = "En alta in",
+                                    tint = TextPrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "En alta in",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                    color = TextPrimary
+                                )
+                            }
+                        }
+                    }
+
                     ChatInputBar(
                         inputText = uiState.inputText,
                         onInputTextChanged = { viewModel.onInputTextChanged(it) },
+                        attachedFiles = uiState.attachedFiles,
                         attachedFile = uiState.attachedFile,
                         isRecordingVoice = uiState.isRecordingVoice,
                         isLoading = uiState.isLoading,
+                        onAttachFiles = { viewModel.attachFiles(it) },
                         onAttachFile = { viewModel.attachFile(it) },
+                        onRemoveFile = { viewModel.removeAttachedFile(it) },
                         onRemoveAttachedFile = { viewModel.removeAttachedFile() },
                         onToggleVoiceRecording = { viewModel.toggleVoiceRecording() },
                         onSendMessage = { viewModel.sendMessage() },

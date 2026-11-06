@@ -137,22 +137,42 @@ class ChatHistoryManager(private val context: Context) {
                 )
                 if (msg.imageUri != null) msgMap["imageUri"] = msg.imageUri
 
-                if (msg.attachedFile != null) {
-                    val af = msg.attachedFile
+                val files = msg.allAttachedFiles
+                if (files.isNotEmpty()) {
                     msgMap["hasFile"] = true
-                    msgMap["fileName"] = af.name
-                    msgMap["fileUri"] = af.uri
-                    msgMap["fileMime"] = af.mimeType
-                    msgMap["fileSize"] = af.sizeBytes
-                    msgMap["fileIsText"] = af.isText
-                    msgMap["fileIsPdf"] = af.isPdf
-                    msgMap["fileIsImage"] = af.isImage
-                    if (!af.cachedContent.isNullOrBlank()) {
-                        msgMap["fileContent"] = af.cachedContent
+                    val first = files.first()
+                    msgMap["fileName"] = first.name
+                    msgMap["fileUri"] = first.uri
+                    msgMap["fileMime"] = first.mimeType
+                    msgMap["fileSize"] = first.sizeBytes
+                    msgMap["fileIsText"] = first.isText
+                    msgMap["fileIsPdf"] = first.isPdf
+                    msgMap["fileIsImage"] = first.isImage
+                    if (!first.cachedContent.isNullOrBlank()) {
+                        msgMap["fileContent"] = first.cachedContent
                     }
-                    if (!af.localCachedPath.isNullOrBlank()) {
-                        msgMap["fileLocalPath"] = af.localCachedPath
+                    if (!first.localCachedPath.isNullOrBlank()) {
+                        msgMap["fileLocalPath"] = first.localCachedPath
                     }
+
+                    try {
+                        val array = org.json.JSONArray()
+                        for (f in files) {
+                            val fObj = org.json.JSONObject().apply {
+                                put("uri", f.uri)
+                                put("name", f.name)
+                                put("mimeType", f.mimeType)
+                                put("sizeBytes", f.sizeBytes)
+                                put("isImage", f.isImage)
+                                put("isPdf", f.isPdf)
+                                put("isText", f.isText)
+                                if (!f.cachedContent.isNullOrBlank()) put("fileContent", f.cachedContent)
+                                if (!f.localCachedPath.isNullOrBlank()) put("fileLocalPath", f.localCachedPath)
+                            }
+                            array.put(fObj)
+                        }
+                        msgMap["filesJson"] = array.toString()
+                    } catch (_: Throwable) {}
                 }
 
                 messagesCollection?.document(msg.id)?.set(msgMap)
@@ -180,8 +200,32 @@ class ChatHistoryManager(private val context: Context) {
                         val imageUri = doc.getString("imageUri")
                         val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
 
+                        val loadedFiles = mutableListOf<com.example.model.AttachedFile>()
+                        val filesJsonStr = doc.getString("filesJson")
+                        if (!filesJsonStr.isNullOrBlank()) {
+                            try {
+                                val arr = org.json.JSONArray(filesJsonStr)
+                                for (i in 0 until arr.length()) {
+                                    val o = arr.getJSONObject(i)
+                                    loadedFiles.add(
+                                        com.example.model.AttachedFile(
+                                            uri = o.optString("uri", ""),
+                                            name = o.optString("name", "dosya"),
+                                            mimeType = o.optString("mimeType", "application/octet-stream"),
+                                            sizeBytes = o.optLong("sizeBytes", 0L),
+                                            isImage = o.optBoolean("isImage", false),
+                                            isPdf = o.optBoolean("isPdf", false),
+                                            isText = o.optBoolean("isText", false),
+                                            cachedContent = o.optString("fileContent").takeIf { it.isNotBlank() },
+                                            localCachedPath = o.optString("fileLocalPath").takeIf { it.isNotBlank() }
+                                        )
+                                    )
+                                }
+                            } catch (_: Throwable) {}
+                        }
+
                         val hasFile = doc.getBoolean("hasFile") ?: false
-                        val attachedFile = if (hasFile) {
+                        val fallbackSingleFile = if (loadedFiles.isEmpty() && hasFile) {
                             com.example.model.AttachedFile(
                                 uri = doc.getString("fileUri") ?: "",
                                 name = doc.getString("fileName") ?: "dosya",
@@ -195,13 +239,16 @@ class ChatHistoryManager(private val context: Context) {
                             )
                         } else null
 
+                        val finalFileList = if (loadedFiles.isNotEmpty()) loadedFiles else listOfNotNull(fallbackSingleFile)
+
                         list.add(
                             ChatMessage(
                                 id = id,
                                 sender = sender,
                                 text = text,
                                 imageUri = imageUri,
-                                attachedFile = attachedFile,
+                                attachedFile = finalFileList.firstOrNull(),
+                                attachedFiles = finalFileList,
                                 timestamp = timestamp,
                                 isStreaming = false
                             )

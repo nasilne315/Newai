@@ -28,6 +28,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -101,11 +104,14 @@ import com.example.util.FileUtils
 fun ChatInputBar(
     inputText: String,
     onInputTextChanged: (String) -> Unit,
-    attachedFile: AttachedFile?,
+    attachedFiles: List<AttachedFile> = emptyList(),
+    attachedFile: AttachedFile? = null,
     isRecordingVoice: Boolean,
     isLoading: Boolean,
-    onAttachFile: (AttachedFile?) -> Unit,
-    onRemoveAttachedFile: () -> Unit,
+    onAttachFiles: (List<AttachedFile>) -> Unit = {},
+    onAttachFile: (AttachedFile?) -> Unit = {},
+    onRemoveFile: (AttachedFile) -> Unit = {},
+    onRemoveAttachedFile: () -> Unit = {},
     onToggleVoiceRecording: () -> Unit,
     onSendMessage: () -> Unit,
     isWebSearchEnabled: Boolean = true,
@@ -113,6 +119,7 @@ fun ChatInputBar(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val effectiveFiles = if (attachedFiles.isNotEmpty()) attachedFiles else listOfNotNull(attachedFile)
 
     var tempCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
 
@@ -122,7 +129,10 @@ fun ChatInputBar(
             val currentUri = tempCameraUri
             if (success && currentUri != null) {
                 val file = FileUtils.getAttachedFile(context, currentUri)
-                onAttachFile(file)
+                if (file != null) {
+                    onAttachFiles(listOf(file))
+                    onAttachFile(file)
+                }
             }
         }
     )
@@ -155,11 +165,24 @@ fun ChatInputBar(
     )
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent(),
-        onResult = { uri ->
-            if (uri != null) {
-                val file = FileUtils.getAttachedFile(context, uri)
-                onAttachFile(file)
+        contract = ActivityResultContracts.GetMultipleContents(),
+        onResult = { uris ->
+            if (!uris.isNullOrEmpty()) {
+                val newFiles = mutableListOf<AttachedFile>()
+                for (uri in uris) {
+                    try {
+                        val file = FileUtils.getAttachedFile(context, uri)
+                        if (file != null) {
+                            newFiles.add(file)
+                        }
+                    } catch (t: Throwable) {
+                        android.util.Log.e("ChatInputBar", "Error reading selected file", t)
+                    }
+                }
+                if (newFiles.isNotEmpty()) {
+                    onAttachFiles(newFiles)
+                    onAttachFile(newFiles.first())
+                }
             }
         }
     )
@@ -187,7 +210,7 @@ fun ChatInputBar(
     val focusRequester = remember { FocusRequester() }
     val coroutineScope = rememberCoroutineScope()
 
-    val canSend = (inputText.isNotBlank() || attachedFile != null) && !isLoading
+    val canSend = (inputText.isNotBlank() || effectiveFiles.isNotEmpty()) && !isLoading
     val sendButtonColor by animateColorAsState(
         targetValue = if (canSend) SendButtonDarkBlue else SendButtonDisabled,
         label = "sendButtonColor"
@@ -237,89 +260,101 @@ fun ChatInputBar(
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 AnimatedVisibility(
-                    visible = attachedFile != null,
+                    visible = effectiveFiles.isNotEmpty(),
                     enter = fadeIn(),
                     exit = fadeOut()
                 ) {
-                    if (attachedFile != null) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .padding(bottom = 8.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(ModelBadgeBg)
-                                .border(BorderStroke(1.dp, ModelBadgeBorder), RoundedCornerShape(12.dp))
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
-                                .testTag("attached_file_preview")
-                        ) {
-                            if (attachedFile.isImage) {
-                                AsyncImage(
-                                    model = attachedFile.uri,
-                                    contentDescription = "Image preview",
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(RoundedCornerShape(6.dp)),
-                                    contentScale = ContentScale.Crop
-                                )
-                            } else if (attachedFile.isPdf) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Color(0xFFDC2626)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.PictureAsPdf,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Color(0xFF2563EB)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Description,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f, fill = false)) {
-                                Text(
-                                    text = attachedFile.name,
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                                    color = TextPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                if (attachedFile.formattedSize.isNotBlank()) {
-                                    Text(
-                                        text = attachedFile.formattedSize,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = TextSecondary
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Icon(
-                                imageVector = Icons.Rounded.Close,
-                                contentDescription = "Dosyayı kaldır",
-                                tint = TextSecondary,
+                    LazyRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                            .testTag("attached_files_row"),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(effectiveFiles, key = { it.name + it.uri }) { file ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
-                                    .size(20.dp)
-                                    .clip(CircleShape)
-                                    .pointerHoverIcon(PointerIcon.Hand)
-                                    .clickable { onRemoveAttachedFile() }
-                            )
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(ModelBadgeBg)
+                                    .border(BorderStroke(1.dp, ModelBadgeBorder), RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                                    .testTag("attached_file_${file.name}")
+                            ) {
+                                if (file.isImage) {
+                                    AsyncImage(
+                                        model = file.uri,
+                                        contentDescription = "Image preview",
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .clip(RoundedCornerShape(6.dp)),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                } else if (file.isPdf) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(Color(0xFFDC2626)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.PictureAsPdf,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(Color(0xFF2563EB)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Description,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column(modifier = Modifier.widthIn(max = 130.dp)) {
+                                    Text(
+                                        text = file.name,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                        color = TextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (file.formattedSize.isNotBlank()) {
+                                        Text(
+                                            text = file.formattedSize,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = TextSecondary
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "Dosyayı kaldır",
+                                    tint = TextSecondary,
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .clip(CircleShape)
+                                        .pointerHoverIcon(PointerIcon.Hand)
+                                        .clickable {
+                                            onRemoveFile(file)
+                                            if (effectiveFiles.size <= 1) {
+                                                onRemoveAttachedFile()
+                                            }
+                                        }
+                                )
+                            }
                         }
                     }
                 }

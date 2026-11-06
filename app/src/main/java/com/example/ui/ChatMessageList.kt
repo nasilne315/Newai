@@ -336,81 +336,85 @@ private fun UserMessageItem(
                 Column(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
-                    val attached = message.attachedFile
-                    if (attached != null) {
-                        if (attached.isImage) {
-                            AsyncImage(
-                                model = attached.uri,
-                                contentDescription = "User image",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(180.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .padding(bottom = 8.dp),
-                                contentScale = ContentScale.Crop
-                            )
-                        } else {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFF0F2342))
-                                    .border(BorderStroke(1.dp, Color(0xFF1E3A5F)), RoundedCornerShape(10.dp))
-                                    .padding(8.dp)
-                            ) {
-                                if (attached.isPdf) {
-                                    Box(
+                    val attachedList = message.allAttachedFiles
+                    if (attachedList.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            attachedList.forEach { attached ->
+                                if (attached.isImage) {
+                                    AsyncImage(
+                                        model = attached.uri,
+                                        contentDescription = "User image",
                                         modifier = Modifier
-                                            .size(32.dp)
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(Color(0xFFDC2626)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.PictureAsPdf,
-                                            contentDescription = null,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(Color(0xFF2563EB)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Description,
-                                            contentDescription = null,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column(modifier = Modifier.weight(1f, fill = false)) {
-                                    Text(
-                                        text = attached.name,
-                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                                        color = TextPrimary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                            .fillMaxWidth()
+                                            .height(180.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .padding(bottom = 4.dp),
+                                        contentScale = ContentScale.Crop
                                     )
-                                    if (attached.formattedSize.isNotBlank()) {
-                                        Text(
-                                            text = attached.formattedSize,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = TextSecondary
-                                        )
+                                } else {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(Color(0xFF0F2342))
+                                            .border(BorderStroke(1.dp, Color(0xFF1E3A5F)), RoundedCornerShape(10.dp))
+                                            .padding(8.dp)
+                                    ) {
+                                        if (attached.isPdf) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(32.dp)
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(Color(0xFFDC2626)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.PictureAsPdf,
+                                                    contentDescription = null,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(32.dp)
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(Color(0xFF2563EB)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.Description,
+                                                    contentDescription = null,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column(modifier = Modifier.weight(1f, fill = false)) {
+                                            Text(
+                                                text = attached.name,
+                                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                                color = TextPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            if (attached.formattedSize.isNotBlank()) {
+                                                Text(
+                                                    text = attached.formattedSize,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = TextSecondary
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            if (message.text.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                            }
+                        }
+                        if (message.text.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
                         }
                     } else if (message.imageUri != null) {
                         AsyncImage(

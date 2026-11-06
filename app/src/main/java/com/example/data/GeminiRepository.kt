@@ -8,6 +8,7 @@ import com.example.model.ChatMessage
 import com.example.model.GroundingSource
 import com.example.model.MessageSender
 import com.example.util.FileExporter
+import com.example.util.FileUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -45,22 +46,17 @@ class GeminiRepository(private val context: Context) {
 
     private val client = OkHttpClient.Builder()
         .connectionPool(okhttp3.ConnectionPool(10, 5, TimeUnit.MINUTES))
-        .connectTimeout(25, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
-    // Candidate models to automatically cycle through for maximum speed and reliability (Flash Lite Latest prioritized)
-    private val candidateModels = listOf(
-        "gemini-2.0-flash-lite",
-        "gemini-flash-lite-latest",
-        "gemini-2.5-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-2.5-flash"
-    )
+    companion object {
+        const val MODEL_ID = "gemini-2.0-flash-lite"
+    }
 
     /**
      * Pre-connects / warms up the OkHttpClient connection pool and TLS handshake
@@ -101,6 +97,7 @@ class GeminiRepository(private val context: Context) {
 
     fun sendMessageStream(
         userPrompt: String,
+        attachedFiles: List<AttachedFile> = emptyList(),
         attachedFile: AttachedFile? = null,
         conversationHistory: List<ChatMessage> = emptyList(),
         persona: com.example.model.AssistantPersona = com.example.model.AssistantPersona.GENERAL,
@@ -121,46 +118,76 @@ class GeminiRepository(private val context: Context) {
             return@flow
         }
 
-        var failoverNotice: String? = null
         val attemptsCount = validKeys.size
         var currentActive = apiKeyManager.getActiveKey() ?: validKeys.first()
 
-        // Ultra-fast Dynamic Routing: Use flash-lite for instantaneous sub-300ms chat/Q&A,
-        // and switch to flash when full file editing or heavy code is detected
-        val isFileTask = attachedFile != null || isPromptRelatedToFiles(userPrompt, attachedFile)
-        val defaultModel = apiKeyManager.status.value.selectedModel.ifEmpty { "gemini-2.0-flash-lite" }
-        val preferred = if (isFileTask && (defaultModel.contains("flash-lite") || defaultModel.contains("lite"))) "gemini-2.0-flash" else defaultModel
-
-        val modelsToTry = (listOf(preferred) + candidateModels).distinct()
-
         // Only run search tool if web search is enabled AND prompt actually contains time/news/lookup intent
         var useSearchGrounding = isWebSearchEnabled && isSearchWarranted(userPrompt)
+
+        // Automatically detect and extract real web/YouTube/Spotify page contents if prompt contains link(s)
+        val detectedUrls = com.example.util.WebPageExtractor.extractUrls(userPrompt)
+        var webContextPrefix: String? = null
+        if (detectedUrls.isNotEmpty()) {
+            val webContents = mutableListOf<com.example.util.ExtractedWebContent>()
+            for (u in detectedUrls.take(2)) {
+                val extracted = com.example.util.WebPageExtractor.fetchUrlContent(u, client)
+                if (extracted != null) {
+                    webContents.add(extracted)
+                }
+            }
+            if (webContents.isNotEmpty()) {
+                val sb = StringBuilder()
+                sb.append("======================================================================\n")
+                sb.append("KULLANICININ PAYLAŞTIĞI BAĞLANTI(LAR) VE İNCELENEN CANLI SAYFA İÇERİKLERİ:\n")
+                for (w in webContents) {
+                    sb.append("\n[BAĞLANTI: ${w.url} (${w.platformType})]\n")
+                    if (!w.title.isNullOrBlank()) sb.append("Başlık: ${w.title}\n")
+                    if (!w.description.isNullOrBlank()) sb.append("Açıklama: ${w.description}\n")
+                    if (!w.mainContent.isNullOrBlank()) {
+                        sb.append("İçerik Detayları:\n${w.mainContent}\n")
+                    }
+                }
+                sb.append("======================================================================\n\n")
+                webContextPrefix = sb.toString()
+            }
+        }
 
         // Use instant in-memory context and memories for lightning-fast responses (Firestore snapshot listeners keep them live in real-time)
         val freshRoutineContext = routineContextManager.routineSummary.value
         val freshMemories = memoryManager.getFormattedMemoriesForSystemPrompt()
         val freshRules = memoryManager.getFormattedRulesForSystemPrompt()
 
+        val allCurrentFiles = if (attachedFiles.isNotEmpty()) attachedFiles else listOfNotNull(attachedFile)
+
         attemptLoop@ for (attempt in 0 until attemptsCount) {
             val keyIndex = currentActive.first
             val keyValue = currentActive.second
 
-            var modelIndex = 0
-            while (modelIndex < modelsToTry.size) {
-                val currentModel = modelsToTry[modelIndex]
-                val cleanModel = currentModel.removePrefix("models/")
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:streamGenerateContent?alt=sse&key=$keyValue"
+            val accumulated = StringBuilder()
+            val accumulatedSources = mutableListOf<GroundingSource>()
+            val accumulatedQueries = mutableListOf<String>()
 
+            var continuationAttempt = 0
+            val maxContinuations = 2
+            var isOverallSuccess = false
+
+            continuationLoop@ while (continuationAttempt <= maxContinuations) {
+                val isContinuation = continuationAttempt > 0
                 val requestBody = buildRequestBody(
                     userPrompt = userPrompt,
-                    attachedFile = attachedFile,
+                    attachedFiles = allCurrentFiles,
+                    attachedFile = allCurrentFiles.firstOrNull(),
                     conversationHistory = conversationHistory,
-                    includeSearchGrounding = useSearchGrounding,
+                    includeSearchGrounding = if (isContinuation) false else useSearchGrounding,
                     persona = persona,
                     freshRoutineContext = freshRoutineContext,
                     freshMemoriesText = freshMemories,
-                    freshRulesText = freshRules
+                    freshRulesText = freshRules,
+                    continuationAssistantText = if (isContinuation) accumulated.toString() else null,
+                    webContextPrefix = webContextPrefix
                 )
+
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_ID:streamGenerateContent?alt=sse&key=$keyValue"
                 val request = Request.Builder()
                     .url(url)
                     .addHeader("Accept", "text/event-stream")
@@ -168,7 +195,8 @@ class GeminiRepository(private val context: Context) {
                     .post(requestBody)
                     .build()
 
-                var callSuccess = false
+                var lastFinishReason: String? = null
+
                 try {
                     val response = client.newCall(request).execute()
 
@@ -177,53 +205,31 @@ class GeminiRepository(private val context: Context) {
                         val errBody = response.body?.string().orEmpty()
                         val lowerErr = errBody.lowercase()
 
-                        // If 404, 429, or 503: Try next model or failover
                         val is429or503 = code == 429 || code == 503 ||
                                 lowerErr.contains("quota") || lowerErr.contains("rate") ||
-                                lowerErr.contains("resource_exhausted") || lowerErr.contains("overloaded") ||
-                                code == 404
+                                lowerErr.contains("resource_exhausted") || lowerErr.contains("overloaded")
 
                         if (is429or503) {
-                            // 1. Try next model if available
-                            if (modelIndex < modelsToTry.size - 1) {
-                                modelIndex++
-                                val nextModel = modelsToTry[modelIndex]
-                                val reason = when {
-                                    code == 503 || lowerErr.contains("overloaded") -> "Sunucu Yoğun (503)"
-                                    code == 429 -> "Kota Sınırı (429)"
-                                    else -> "Bulunamadı (404)"
-                                }
-                                failoverNotice = "Model '$currentModel' $reason. Otomatik olarak '$nextModel' modeline geçiliyor..."
-                                apiKeyManager.setSelectedModel(nextModel)
-                                delay(800)
-                                continue
-                            }
-
-                            // 2. If another API key is available in the pool, switch to it!
                             if (attempt < attemptsCount - 1) {
                                 val reason = if (code == 503 || lowerErr.contains("overloaded")) "Sunucu yoğun (503)" else "Kota sınırı (429)"
                                 val nextKey = apiKeyManager.switchToNextKey(keyIndex, reason)
                                 if (nextKey != null) {
-                                    failoverNotice = "Anahtar #${keyIndex + 1} ($reason). Otomatik olarak Anahtar #${nextKey.first + 1}'e geçildi."
                                     currentActive = nextKey
-                                    delay(1000)
+                                    delay(600)
                                     continue@attemptLoop
                                 }
                             }
-
-                            // 3. Retry without search grounding if active
                             if (useSearchGrounding) {
                                 useSearchGrounding = false
-                                failoverNotice = "Arama aracı geçici olarak meşgul. Standart modda tekrar deneniyor..."
-                                delay(1000)
-                                continue
+                                delay(600)
+                                continue@attemptLoop
                             }
                         }
 
                         val specificMsg = when {
-                            code == 503 -> "HTTP 503 (Sunucu Yoğun): Google Gemini sunucuları şu anda çok yoğun veya geçici olarak bakımda. Lütfen 5-10 saniye sonra tekrar deneyin."
-                            code == 429 -> "HTTP 429 (Kota Sınırı): Gemini dakikalık istek sınırı doldu. Birkaç saniye sonra tekrar deneyin veya menüden yedek API anahtarları ekleyin."
-                            code == 404 -> "HTTP 404: Model ($cleanModel) bulunamadı. Lütfen API anahtarınızın geçerli olduğundan emin olun."
+                            code == 503 -> "HTTP 503 (Sunucu Yoğun): Google sunucuları şu anda yoğun. Lütfen birkaç saniye sonra tekrar deneyin."
+                            code == 429 -> "HTTP 429 (Kota Sınırı): Gemini dakikalık istek kotası doldu. Birkaç saniye sonra tekrar deneyin veya yedek API anahtarı ekleyin."
+                            code == 404 -> "HTTP 404: Model ($MODEL_ID) bulunamadı. Lütfen API anahtarınızı kontrol edin."
                             else -> "HTTP $code: $errBody"
                         }
                         emit(StreamUpdate(accumulatedText = "", error = specificMsg, isDone = true))
@@ -236,13 +242,8 @@ class GeminiRepository(private val context: Context) {
                         return@flow
                     }
 
-                    callSuccess = true
-                    apiKeyManager.setSelectedModel(cleanModel)
-
+                    isOverallSuccess = true
                     val reader = BufferedReader(InputStreamReader(bodyStream, Charsets.UTF_8))
-                    val accumulated = StringBuilder()
-                    val accumulatedSources = mutableListOf<GroundingSource>()
-                    val accumulatedQueries = mutableListOf<String>()
                     var line: String?
 
                     while (reader.readLine().also { line = it } != null) {
@@ -254,6 +255,11 @@ class GeminiRepository(private val context: Context) {
                                     val chunkJson = JSONObject(jsonPart)
                                     val candidates = chunkJson.optJSONArray("candidates")
                                     val firstCand = candidates?.optJSONObject(0)
+
+                                    val finish = firstCand?.optString("finishReason")
+                                    if (!finish.isNullOrBlank()) {
+                                        lastFinishReason = finish
+                                    }
 
                                     val content = firstCand?.optJSONObject("content")
                                     val parts = content?.optJSONArray("parts")
@@ -280,34 +286,31 @@ class GeminiRepository(private val context: Context) {
                                             accumulatedText = accumulated.toString(),
                                             groundingSources = accumulatedSources.toList(),
                                             searchQueries = accumulatedQueries.toList(),
-                                            failoverNotice = failoverNotice,
+                                            failoverNotice = null,
                                             isDone = false
                                         )
                                     )
-                                } catch (e: Exception) {
-                                    // Ignore partial chunk parsing
+                                } catch (_: Exception) {
+                                    // Ignore partial chunk parse error
                                 }
                             }
                         }
                     }
+                    response.close()
 
-                    val finalOutput = accumulated.toString()
-                    emit(
-                        StreamUpdate(
-                            accumulatedText = finalOutput.ifBlank { "Yanıt alınamadı." },
-                            groundingSources = accumulatedSources.toList(),
-                            searchQueries = accumulatedQueries.toList(),
-                            failoverNotice = failoverNotice,
-                            isDone = true
-                        )
-                    )
-                    return@flow
+                    // If response was cut off due to MAX_TOKENS, seamlessly continue generating the rest!
+                    if (lastFinishReason == "MAX_TOKENS" && continuationAttempt < maxContinuations) {
+                        continuationAttempt++
+                        delay(150)
+                        continue@continuationLoop
+                    } else {
+                        break@continuationLoop
+                    }
 
                 } catch (e: Exception) {
-                    if (!callSuccess && attempt < attemptsCount - 1) {
+                    if (!isOverallSuccess && attempt < attemptsCount - 1) {
                         val nextKey = apiKeyManager.switchToNextKey(keyIndex, e.localizedMessage ?: "Bağlantı hatası")
                         if (nextKey != null) {
-                            failoverNotice = "Anahtar #${keyIndex + 1} başarısız oldu. Anahtar #${nextKey.first + 1}'e devredildi."
                             currentActive = nextKey
                             continue@attemptLoop
                         }
@@ -322,12 +325,26 @@ class GeminiRepository(private val context: Context) {
                     return@flow
                 }
             }
+
+            if (isOverallSuccess) {
+                val finalOutput = accumulated.toString()
+                emit(
+                    StreamUpdate(
+                        accumulatedText = finalOutput.ifBlank { "Yanıt alınamadı." },
+                        groundingSources = accumulatedSources.toList(),
+                        searchQueries = accumulatedQueries.toList(),
+                        failoverNotice = null,
+                        isDone = true
+                    )
+                )
+                return@flow
+            }
         }
 
         emit(
             StreamUpdate(
                 accumulatedText = "",
-                error = "Tüm 3 API anahtarının kotası tükendi veya modeller yanıt vermedi. Lütfen API anahtarlarınızı kontrol edin.",
+                error = "Tüm 3 API anahtarının kotası tükendi veya sunucu yanıt vermedi. Lütfen API anahtarlarınızı kontrol edin.",
                 isDone = true
             )
         )
@@ -335,6 +352,7 @@ class GeminiRepository(private val context: Context) {
 
     suspend fun sendMessage(
         userPrompt: String,
+        attachedFiles: List<AttachedFile> = emptyList(),
         attachedFile: AttachedFile? = null,
         conversationHistory: List<ChatMessage> = emptyList()
     ): Result<SendMessageResult> = withContext(Dispatchers.IO) {
@@ -353,98 +371,104 @@ class GeminiRepository(private val context: Context) {
             )
         }
 
-        var failoverNotice: String? = null
         val attemptsCount = validKeys.size
         var currentActive = apiKeyManager.getActiveKey() ?: validKeys.first()
-
-        val isFileTask = attachedFile != null || isPromptRelatedToFiles(userPrompt, attachedFile)
-        val defaultModel = apiKeyManager.status.value.selectedModel.ifEmpty { "gemini-2.0-flash-lite" }
-        val preferred = if (isFileTask && (defaultModel.contains("flash-lite") || defaultModel.contains("lite"))) "gemini-2.0-flash" else defaultModel
-        val modelsToTry = (listOf(preferred) + candidateModels).distinct()
-
         var useSearchGrounding = isSearchWarranted(userPrompt)
 
-        // Use instant in-memory context and memories for lightning-fast responses
+        val detectedUrls = com.example.util.WebPageExtractor.extractUrls(userPrompt)
+        var webContextPrefix: String? = null
+        if (detectedUrls.isNotEmpty()) {
+            val webContents = mutableListOf<com.example.util.ExtractedWebContent>()
+            for (u in detectedUrls.take(2)) {
+                val extracted = com.example.util.WebPageExtractor.fetchUrlContent(u, client)
+                if (extracted != null) webContents.add(extracted)
+            }
+            if (webContents.isNotEmpty()) {
+                val sb = StringBuilder()
+                sb.append("======================================================================\n")
+                sb.append("KULLANICININ PAYLAŞTIĞI BAĞLANTI(LAR) VE İNCELENEN CANLI SAYFA İÇERİKLERİ:\n")
+                for (w in webContents) {
+                    sb.append("\n[BAĞLANTI: ${w.url} (${w.platformType})]\n")
+                    if (!w.title.isNullOrBlank()) sb.append("Başlık: ${w.title}\n")
+                    if (!w.description.isNullOrBlank()) sb.append("Açıklama: ${w.description}\n")
+                    if (!w.mainContent.isNullOrBlank()) sb.append("İçerik Detayları:\n${w.mainContent}\n")
+                }
+                sb.append("======================================================================\n\n")
+                webContextPrefix = sb.toString()
+            }
+        }
+
         val freshRoutineContext = routineContextManager.routineSummary.value
         val freshMemories = memoryManager.getFormattedMemoriesForSystemPrompt()
         val freshRules = memoryManager.getFormattedRulesForSystemPrompt()
+
+        val allCurrentFiles = if (attachedFiles.isNotEmpty()) attachedFiles else listOfNotNull(attachedFile)
 
         attemptLoop@ for (attempt in 0 until attemptsCount) {
             val keyIndex = currentActive.first
             val keyValue = currentActive.second
 
-            var modelIndex = 0
-            while (modelIndex < modelsToTry.size) {
-                val currentModel = modelsToTry[modelIndex]
-                val cleanModel = currentModel.removePrefix("models/")
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:generateContent?key=$keyValue"
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_ID:generateContent?key=$keyValue"
 
-                try {
-                    val requestBody = buildRequestBody(
-                        userPrompt = userPrompt,
-                        attachedFile = attachedFile,
-                        conversationHistory = conversationHistory,
-                        includeSearchGrounding = useSearchGrounding,
-                        freshRoutineContext = freshRoutineContext,
-                        freshMemoriesText = freshMemories,
-                        freshRulesText = freshRules
-                    )
-                    val request = Request.Builder()
-                        .url(url)
-                        .post(requestBody)
-                        .build()
+            try {
+                val requestBody = buildRequestBody(
+                    userPrompt = userPrompt,
+                    attachedFiles = allCurrentFiles,
+                    attachedFile = allCurrentFiles.firstOrNull(),
+                    conversationHistory = conversationHistory,
+                    includeSearchGrounding = useSearchGrounding,
+                    freshRoutineContext = freshRoutineContext,
+                    freshMemoriesText = freshMemories,
+                    freshRulesText = freshRules,
+                    webContextPrefix = webContextPrefix
+                )
+                val request = Request.Builder()
+                    .url(url)
+                    .post(requestBody)
+                    .build()
 
-                    val response = client.newCall(request).execute()
-                    val responseBodyString = response.body?.string().orEmpty()
+                val response = client.newCall(request).execute()
+                val responseBodyString = response.body?.string().orEmpty()
 
-                    if (!response.isSuccessful) {
-                        val errorMsg = responseBodyString.lowercase()
+                if (!response.isSuccessful) {
+                    val errorMsg = responseBodyString.lowercase()
 
-                        if (response.code == 404 && modelIndex < modelsToTry.size - 1) {
-                            modelIndex++
-                            val nextModel = modelsToTry[modelIndex]
-                            failoverNotice = "Model '$currentModel' 404 verdi. Otomatik olarak '$nextModel' modeline geçildi."
-                            apiKeyManager.setSelectedModel(nextModel)
+                    val is429or503 = response.code == 429 || response.code == 503 ||
+                            errorMsg.contains("quota") || errorMsg.contains("rate") ||
+                            errorMsg.contains("resource_exhausted") || errorMsg.contains("overloaded")
+
+                    if (is429or503) {
+                        if (attempt < attemptsCount - 1) {
+                            val reason = if (response.code == 503 || errorMsg.contains("overloaded")) "Sunucu yoğun (503)" else "Kota doldu (429)"
+                            val nextKey = apiKeyManager.switchToNextKey(keyIndex, reason)
+                            if (nextKey != null) {
+                                currentActive = nextKey
+                                continue@attemptLoop
+                            }
+                        }
+
+                        if (useSearchGrounding) {
+                            useSearchGrounding = false
+                            delay(800)
                             continue
                         }
+                    }
 
-                        val is429or503 = response.code == 429 || response.code == 503 ||
-                                errorMsg.contains("quota") || errorMsg.contains("rate") ||
-                                errorMsg.contains("resource_exhausted") || errorMsg.contains("overloaded")
+                    val errText = when {
+                        response.code == 429 -> "HTTP 429 (Kota Sınırı): İstek kotası doldu. Lütfen biraz bekleyin veya yedek anahtar ekleyin."
+                        response.code == 404 -> "HTTP 404: Model ($MODEL_ID) bulunamadı."
+                        else -> "HTTP ${response.code}: $responseBodyString"
+                    }
+                    return@withContext Result.failure(Exception(errText))
+                } else {
+                    val jsonResponse = JSONObject(responseBodyString)
+                    val candidates = jsonResponse.optJSONArray("candidates")
+                    val firstCandidate = candidates?.optJSONObject(0)
+                        ?: return@withContext Result.failure(Exception("Model yanıt vermedi."))
 
-                        if (is429or503) {
-                            if (attempt < attemptsCount - 1) {
-                                val reason = if (response.code == 503 || errorMsg.contains("overloaded")) "Sunucu yoğun (503)" else "Kota doldu (429)"
-                                val nextKey = apiKeyManager.switchToNextKey(keyIndex, reason)
-                                if (nextKey != null) {
-                                    failoverNotice = "Anahtar #${keyIndex + 1} ($reason). Otomatik olarak Anahtar #${nextKey.first + 1}'e geçildi."
-                                    currentActive = nextKey
-                                    continue@attemptLoop
-                                }
-                            }
-
-                            if (useSearchGrounding) {
-                                useSearchGrounding = false
-                                delay(1200)
-                                continue
-                            }
-                        }
-
-                        val errText = when {
-                            response.code == 429 -> "HTTP 429 (Kota Sınırı): İstek kotası doldu. Lütfen biraz bekleyin veya yedek anahtar ekleyin."
-                            response.code == 404 -> "HTTP 404: Model ($cleanModel) bulunamadı."
-                            else -> "HTTP ${response.code}: $responseBodyString"
-                        }
-                        return@withContext Result.failure(Exception(errText))
-                    } else {
-                        val jsonResponse = JSONObject(responseBodyString)
-                        val candidates = jsonResponse.optJSONArray("candidates")
-                        val firstCandidate = candidates?.optJSONObject(0)
-                            ?: return@withContext Result.failure(Exception("Model yanıt vermedi."))
-
-                        val content = firstCandidate.optJSONObject("content")
-                        val parts = content?.optJSONArray("parts")
-                        var replyText = ""
+                    val content = firstCandidate.optJSONObject("content")
+                    val parts = content?.optJSONArray("parts")
+                    var replyText = ""
 
                         if (parts != null) {
                             for (i in 0 until parts.length()) {
@@ -463,7 +487,6 @@ class GeminiRepository(private val context: Context) {
                             parseGroundingData(groundingMeta, sources, queries)
                         }
 
-                        apiKeyManager.setSelectedModel(cleanModel)
                         return@withContext Result.success(
                             SendMessageResult(
                                 message = ChatMessage(
@@ -472,7 +495,7 @@ class GeminiRepository(private val context: Context) {
                                     groundingSources = sources,
                                     searchQueries = queries
                                 ),
-                                failoverNotice = failoverNotice
+                                failoverNotice = null
                             )
                         )
                     }
@@ -480,7 +503,6 @@ class GeminiRepository(private val context: Context) {
                     if (attempt < attemptsCount - 1) {
                         val nextKey = apiKeyManager.switchToNextKey(keyIndex, e.localizedMessage ?: "Bağlantı hatası")
                         if (nextKey != null) {
-                            failoverNotice = "Anahtar #${keyIndex + 1} başarısız oldu. Anahtar #${nextKey.first + 1}'e devredildi."
                             currentActive = nextKey
                             continue@attemptLoop
                         }
@@ -488,9 +510,7 @@ class GeminiRepository(private val context: Context) {
                     return@withContext Result.failure(e)
                 }
             }
-        }
-
-        Result.failure(Exception("Tüm 3 API anahtarının kotası tükendi veya modeller yanıt vermedi."))
+        return@withContext Result.failure(Exception("Tüm 3 API anahtarının kotası tükendi veya sunucu yanıt vermedi."))
     }
 
     private fun parseGroundingData(
@@ -531,30 +551,33 @@ class GeminiRepository(private val context: Context) {
     }
 
     private fun collectActiveProjectFiles(
-        attachedFile: AttachedFile?,
+        attachedFiles: List<AttachedFile>,
         conversationHistory: List<ChatMessage>
     ): Map<String, String> {
         val filesMap = mutableMapOf<String, String>()
 
         // 1. Chronologically scan conversation history for user files and AI generated code
+        // CRITICAL: Only text files can be added to filesMap! Never attempt to read binary PDF or image as text!
         for (msg in conversationHistory) {
-            if (msg.sender == MessageSender.USER && msg.attachedFile != null) {
-                val f = msg.attachedFile
-                val text = f.cachedContent
-                    ?: com.example.util.FileUtils.readFileContent(context, f)
-                if (!text.isNullOrBlank()) {
-                    filesMap[f.name] = if (text.length > 80000) text.take(80000) + "\n[... Dosya kısaltıldı ...]" else text
+            if (msg.sender == MessageSender.USER) {
+                for (f in msg.allAttachedFiles) {
+                    if (f.isText && !f.isPdf && !f.isImage) {
+                        val text = f.cachedContent ?: com.example.util.FileUtils.readFileContent(context, f)
+                        if (!text.isNullOrBlank()) {
+                            filesMap[f.name] = if (text.length > 80000) text.take(80000) + "\n[... Dosya kısaltıldı ...]" else text
+                        }
+                    }
                 }
             } else if (msg.sender == MessageSender.AI) {
                 for (gen in msg.generatedFiles) {
-                    if (gen.content.isNotBlank()) {
+                    if (!gen.isPdf && gen.content.isNotBlank()) {
                         filesMap[gen.fileName] = gen.content
                     }
                 }
                 if (msg.text.contains("```file:")) {
                     val extracted = FileExporter.extractGeneratedFiles(msg.text)
                     for (ext in extracted) {
-                        if (ext.content.isNotBlank()) {
+                        if (!ext.isPdf && ext.content.isNotBlank()) {
                             filesMap[ext.fileName] = ext.content
                         }
                     }
@@ -562,12 +585,14 @@ class GeminiRepository(private val context: Context) {
             }
         }
 
-        // 2. Add current turn attached file if readable text
-        if (attachedFile != null) {
-            val currentText = attachedFile.cachedContent
-                ?: com.example.util.FileUtils.readFileContent(context, attachedFile)
-            if (!currentText.isNullOrBlank()) {
-                filesMap[attachedFile.name] = if (currentText.length > 80000) currentText.take(80000) + "\n[... Dosya kısaltıldı ...]" else currentText
+        // 2. Add current turn attached files ONLY if they are genuine text
+        for (currentFile in attachedFiles) {
+            if (currentFile.isText && !currentFile.isPdf && !currentFile.isImage) {
+                val currentText = currentFile.cachedContent
+                    ?: com.example.util.FileUtils.readFileContent(context, currentFile)
+                if (!currentText.isNullOrBlank()) {
+                    filesMap[currentFile.name] = if (currentText.length > 80000) currentText.take(80000) + "\n[... Dosya kısaltıldı ...]" else currentText
+                }
             }
         }
 
@@ -589,43 +614,66 @@ class GeminiRepository(private val context: Context) {
 
     private fun buildRequestBody(
         userPrompt: String,
-        attachedFile: AttachedFile?,
+        attachedFiles: List<AttachedFile> = emptyList(),
+        attachedFile: AttachedFile? = null,
         conversationHistory: List<ChatMessage>,
         includeSearchGrounding: Boolean = true,
         persona: com.example.model.AssistantPersona = com.example.model.AssistantPersona.GENERAL,
         freshRoutineContext: String? = null,
         freshMemoriesText: String? = null,
-        freshRulesText: String? = null
+        freshRulesText: String? = null,
+        continuationAssistantText: String? = null,
+        webContextPrefix: String? = null
     ): RequestBody {
         val rootJson = JSONObject()
         val contentsArray = JSONArray()
 
-        val activeFiles = collectActiveProjectFiles(attachedFile, conversationHistory)
+        val currentTurnFiles = if (attachedFiles.isNotEmpty()) attachedFiles else listOfNotNull(attachedFile)
 
-        // Optimized token budget and generation tuning for maximum speed, accuracy & coding excellence
+        val activeFiles = collectActiveProjectFiles(currentTurnFiles, conversationHistory)
+
+        // Optimized token budget (8192 tokens max) and generation tuning for maximum speed, accuracy & coding excellence
         val genConfig = JSONObject().apply {
             put("temperature", 0.6)
             put("topP", 0.95)
             put("topK", 40)
-            put("maxOutputTokens", 4096)
+            put("maxOutputTokens", 8192)
         }
         rootJson.put("generationConfig", genConfig)
 
-        // Keep compact rolling window (last 6 messages) for minimal token latency
-        val recentHistory = conversationHistory.takeLast(6)
-        for (msg in recentHistory) {
+        // Collect all attached files in this session so sources are never forgotten across conversation turns
+        val allSessionFiles: List<AttachedFile> = (conversationHistory.flatMap { it.allAttachedFiles } + currentTurnFiles)
+            .distinctBy { it.name }
+
+        // Retain full past conversation history (up to 120 messages) so the entire chat session context is preserved!
+        val pastHistory = if (conversationHistory.isNotEmpty() &&
+            conversationHistory.last().sender == MessageSender.USER &&
+            conversationHistory.last().text == userPrompt) {
+            conversationHistory.dropLast(1).takeLast(120)
+        } else {
+            conversationHistory.takeLast(120)
+        }
+
+        for (msg in pastHistory) {
             val contentObj = JSONObject()
             contentObj.put("role", if (msg.sender == MessageSender.USER) "user" else "model")
             val partsArray = JSONArray()
 
-            val messageText = msg.text.ifBlank {
-                if (msg.attachedFile != null) "[Ekli Dosya: ${msg.attachedFile.name}]" else ""
+            val filesSummary = if (msg.allAttachedFiles.isNotEmpty()) {
+                val names = msg.allAttachedFiles.joinToString(", ") { "${it.name} (${it.formattedSize})" }
+                " [Eklenen Dosyalar: $names]"
+            } else ""
+
+            val messageText = (msg.text + filesSummary).trim()
+
+            if (messageText.isNotBlank()) {
+                partsArray.put(JSONObject().put("text", messageText))
             }
 
-            if (messageText.isBlank()) continue
-            partsArray.put(JSONObject().put("text", messageText))
-            contentObj.put("parts", partsArray)
-            contentsArray.put(contentObj)
+            if (partsArray.length() > 0) {
+                contentObj.put("parts", partsArray)
+                contentsArray.put(contentObj)
+            }
         }
 
         val currentTurn = JSONObject()
@@ -634,53 +682,84 @@ class GeminiRepository(private val context: Context) {
 
         var promptText = userPrompt
 
-        if (attachedFile != null) {
-            val fileUri = Uri.parse(attachedFile.uri)
-            if (attachedFile.isPdf) {
-                val base64Data = attachedFile.cachedBase64
-                    ?: com.example.util.FileUtils.readFileBase64(context, attachedFile)
-                    ?: readFileAsBase64(fileUri)
-                if (base64Data != null) {
-                    val inlineDataObj = JSONObject()
-                        .put("mimeType", "application/pdf")
-                        .put("data", base64Data)
-                    currentParts.put(JSONObject().put("inlineData", inlineDataObj))
-                }
-            } else if (attachedFile.isImage) {
-                val base64Data = attachedFile.cachedBase64
-                    ?: com.example.util.FileUtils.readFileBase64(context, attachedFile)
-                    ?: readFileAsBase64(fileUri)
-                if (base64Data != null) {
-                    val mime = if (attachedFile.mimeType.isNotBlank()) attachedFile.mimeType else "image/jpeg"
+        // MULTIMODAL FILES (PDF & IMAGES) HANDLING:
+        // Prioritize:
+        // 1. All media files attached in the current turn
+        // 2. All media files attached earlier in this session (so user can refer back anytime!)
+        val currentMediaFiles = currentTurnFiles.filter { it.isPdf || it.isImage }
+        val pastSessionMediaFiles = allSessionFiles.filter { (it.isPdf || it.isImage) && currentTurnFiles.none { cur -> cur.name == it.name } }
+        val mediaFilesToFeed = (currentMediaFiles + pastSessionMediaFiles).take(6)
+
+        for (file in mediaFilesToFeed) {
+            try {
+                val base64Data = file.cachedBase64
+                    ?: com.example.util.FileUtils.readFileBase64(context, file)
+                    ?: readFileAsBase64(Uri.parse(file.uri))
+
+                if (!base64Data.isNullOrBlank()) {
+                    val mime = if (file.isPdf) "application/pdf" else if (file.mimeType.isNotBlank()) file.mimeType else "image/jpeg"
                     val inlineDataObj = JSONObject()
                         .put("mimeType", mime)
                         .put("data", base64Data)
+
+                    val isCurrent = currentTurnFiles.any { it.name == file.name }
+                    val label = if (isCurrent) {
+                        "[Ekli Dosya: ${file.name}]"
+                    } else {
+                        "[Sohbette Daha Önce Eklenen Kaynak Dosya: ${file.name}]"
+                    }
+                    currentParts.put(JSONObject().put("text", label))
                     currentParts.put(JSONObject().put("inlineData", inlineDataObj))
                 }
-            } else if (attachedFile.isText) {
-                val textContent = activeFiles[attachedFile.name]
-                    ?: attachedFile.cachedContent
-                    ?: com.example.util.FileUtils.readFileContent(context, attachedFile)
-                    ?: readFileAsText(fileUri)
-                if (textContent != null) {
-                    promptText = "[Ekli Dosya: ${attachedFile.name}]\nİçerik:\n$textContent\n---\n[Kullanıcı Sorusu/Talimatı]: ${userPrompt.ifBlank { "Bu dosyanın içeriğini analiz et ve açıkla." }}"
-                }
-            } else {
-                val base64Data = attachedFile.cachedBase64
-                    ?: com.example.util.FileUtils.readFileBase64(context, attachedFile)
-                    ?: readFileAsBase64(fileUri)
-                if (base64Data != null) {
-                    val inlineDataObj = JSONObject()
-                        .put("mimeType", attachedFile.mimeType.ifBlank { "application/octet-stream" })
-                        .put("data", base64Data)
-                    currentParts.put(JSONObject().put("inlineData", inlineDataObj))
-                }
+            } catch (t: Throwable) {
+                android.util.Log.e("GeminiRepository", "Error feeding base64 for ${file.name}", t)
             }
         }
 
-        currentParts.put(JSONObject().put("text", promptText.ifBlank { "Dosyayı analiz et." }))
+        // Embed current turn text files if any
+        val currentTextFiles = currentTurnFiles.filter { it.isText && !it.isPdf && !it.isImage }
+        if (currentTextFiles.isNotEmpty()) {
+            val textBuilder = StringBuilder()
+            for (f in currentTextFiles) {
+                val textContent = activeFiles[f.name] ?: f.cachedContent ?: com.example.util.FileUtils.readFileContent(context, f)
+                if (!textContent.isNullOrBlank()) {
+                    textBuilder.append("\n[Ekli Dosya: ${f.name}]\nİçerik:\n${textContent.take(40000)}\n---\n")
+                }
+            }
+            if (textBuilder.isNotEmpty()) {
+                promptText = "${textBuilder.toString()}\n[Kullanıcı Mesajı]: $promptText"
+            }
+        }
+
+        if (!webContextPrefix.isNullOrBlank()) {
+            promptText = "$webContextPrefix\n$promptText"
+        }
+
+        val finalPrompt = promptText.ifBlank {
+            if (currentTurnFiles.isNotEmpty()) "Ekli dosyaları incele, analiz et ve açıkla."
+            else if (!webContextPrefix.isNullOrBlank()) "İncelenen bağlantı içeriğini analiz et ve açıkla."
+            else if (allSessionFiles.isNotEmpty()) "Sohbetteki kaynak dosyayı incele."
+            else "Merhaba!"
+        }
+        currentParts.put(JSONObject().put("text", finalPrompt))
+
         currentTurn.put("parts", currentParts)
         contentsArray.put(currentTurn)
+
+        if (!continuationAssistantText.isNullOrBlank()) {
+            val partialModelTurn = JSONObject().apply {
+                put("role", "model")
+                put("parts", JSONArray().put(JSONObject().put("text", continuationAssistantText)))
+            }
+            contentsArray.put(partialModelTurn)
+
+            val continueUserTurn = JSONObject().apply {
+                put("role", "user")
+                put("parts", JSONArray().put(JSONObject().put("text", "Lütfen yanıtına kaldığın tam yerden devam et, başa dönme veya tekrar etme, doğrudan kesilen kelimeden sürdür.")))
+            }
+            contentsArray.put(continueUserTurn)
+        }
+
         rootJson.put("contents", contentsArray)
 
         // Only attach Google Search Grounding if enabled
@@ -708,8 +787,25 @@ class GeminiRepository(private val context: Context) {
                 append(routineText).append("\n\n")
             }
 
-            val shouldIncludeFullFiles = isPromptRelatedToFiles(userPrompt, attachedFile)
-            if (activeFiles.isNotEmpty() && shouldIncludeFullFiles) {
+            if (allSessionFiles.isNotEmpty()) {
+                append("======================================================================\n")
+                append("BU SOHBETTE PAYLAŞILAN TÜM DOSYALAR VE ÇALIŞMA KAYNAKLARI (KALICI HAFIZA):\n")
+                append("Kullanıcı bu sohbette aşağıdaki dosyaları yüklemiştir. Tüm bu dosyalar doğrudan hafızandadır ve sohbet boyunca asla unutulmaz:\n\n")
+                allSessionFiles.forEachIndexed { index, file ->
+                    val typeStr = when {
+                        file.isPdf -> "PDF Dokümanı"
+                        file.isImage -> "Görsel / Fotoğraf"
+                        file.isText -> "Metin / Kod Dosyası"
+                        else -> "Belge"
+                    }
+                    append("${index + 1}. [${file.name}] - Tür: $typeStr, Boyut: ${file.formattedSize}\n")
+                }
+                append("\nKURAL: Kullanıcı sohbetin herhangi bir anında (kaç mesaj geçmiş olursa olsun) 'ilk pdf'i oku', 'baştaki dosyaya göre anlat', 'yüklediğim dokümandaki soruları çöz' veya 'kaynaklarda ne yazıyor' dediğinde; o dosyaların içeriğini tam ve eksiksiz hatırla.\n")
+                append("Asla 'dosyayı tekrar yükleyin' veya 'dosyayı göremiyorum' deme. Sohbet boyunca paylaşılan tüm dosyalar doğrudan erişimindedir ve soruları bu kaynaklara göre cevapla.\n")
+                append("======================================================================\n\n")
+            }
+
+            if (activeFiles.isNotEmpty()) {
                 append("======================================================================\n")
                 append("AKTİF PROJE VE ÇALIŞMA DOSYALARI (SOHBET HAFIZASI & EN GÜNCEL KODLAR):\n")
                 append("Bu sohbette kullanıcının yüklediği veya senin geliştirdiğin/değiştirdiğin tüm dosyalar tam ve en güncel halleriyle hafızandadır:\n\n")
@@ -720,11 +816,19 @@ class GeminiRepository(private val context: Context) {
                     append("\n```\n\n")
                 }
                 append("======================================================================\n\n")
-            } else if (activeFiles.isNotEmpty()) {
-                append("Mevcut Proje Dosyaları: ${activeFiles.keys.joinToString(", ")} (Dosya düzenlemesi istendiğinde tüm kodlar yüklenecektir)\n\n")
             }
 
             append("""
+            İNTERNET BAĞLANTILARI, WEB SAYFALARI, YOUTUBE VE SPOTIFY ANALİZ REHBERİ (ÇOK ÖNEMLİ):
+            1. Kullanıcı bir web sitesi, haber, makale, blog, dokümantasyon, YouTube videosu/kanalı veya Spotify bağlantısı paylaştığında; sistem sayfanın gerçek içeriğini, başlığını, meta verilerini ve metnini otomatik olarak çekip senin önüne koyar.
+            2. Bu içerik mesajda [KULLANICININ PAYLAŞTIĞI BAĞLANTI(LAR)] başlığı altında tam ve güncel olarak yer alır.
+            3. Kullanıcı bağlantıyla ilgili özet, inceleme, açıklama, soru-cevap veya tavsiye istediğinde; bağlantıdaki gerçek verilere sadık kalarak, doğrudan ve ayrıntılı bir analiz yap. Asla 'link açamıyorum' veya 'internete erişemiyorum' deme; sayfa içeriği doğrudan erişimindedir.
+
+            DERS ÇALIŞMA VE KAYNAK KORUMA KURALI (EN YÜKSEK ÖNCELİK):
+            1. Kullanıcının bu sohbette paylaştığı tüm ders notları, PDF'ler, kaynak dokümanlar, soru föyleri, tablolar ve özetler bu sohbetin KALICI VE TEMEL DERS MATERYALİDİR.
+            2. Kullanıcı sonraki mesajlarında '1. konuyu anlat', 'soruları çöz', 'özet çıkar', 'şu formülü açıkla' veya 'kaynakta ne yazıyor' dediğinde; kaynakları EKSİKSİZ VE MÜKEMMEL BİR ŞEKİLDE HATIRLA.
+            3. Asla 'hangi kaynak?', 'kaynak bulunamadı' veya 'tekrar yükleyin' deme. Ekli kaynak doküman doğrudan erişimindedir ve tüm açıklamalarını bu kaynağa sadık kalarak, adım adım ve netçe yap.
+
             İNTERNET VE GÜNCEL BİLGİ ARAŞTIRMA KURALI (ÇOK ÖNEMLİ):
             1. Kullanıcının sorusu güncel olaylar, tarih, saat, son haberler, hava durumu, piyasa fiyatları, canlı maçlar, yeni teknolojiler, kişiler, olaylar veya araştırma gerektiren herhangi bir konu içeriyorsa; Google Search aracını kullanarak internette kapsamlı, derinlemesine ve en güncel aramaları yap.
             2. Web aramalarından elde ettiğin en doğru ve güncel bilgileri sentezleyerek kullanıcıya net, doğru ve doğrudan aktar.
@@ -816,19 +920,19 @@ class GeminiRepository(private val context: Context) {
 
     private fun readFileAsBase64(uri: Uri): String? {
         return try {
-            val inputStream = context.contentResolver.openInputStream(uri)
-            val bytes = inputStream?.readBytes() ?: return null
-            Base64.encodeToString(bytes, Base64.NO_WRAP)
-        } catch (e: Exception) {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+            if (bytes.size <= 15 * 1024 * 1024) {
+                Base64.encodeToString(bytes, Base64.NO_WRAP)
+            } else null
+        } catch (_: Throwable) {
             null
         }
     }
 
     private fun readFileAsText(uri: Uri): String? {
         return try {
-            val inputStream = context.contentResolver.openInputStream(uri)
-            inputStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
-        } catch (e: Exception) {
+            context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+        } catch (_: Throwable) {
             null
         }
     }

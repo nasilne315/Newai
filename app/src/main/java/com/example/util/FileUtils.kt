@@ -53,7 +53,6 @@ object FileUtils {
                 lowerName.endsWith(".yaml") || lowerName.endsWith(".yml") || lowerName.endsWith(".log")
 
         var cachedText: String? = null
-        var cachedBase64: String? = null
         var localCachedPath: String? = null
 
         try {
@@ -61,23 +60,29 @@ object FileUtils {
             val safeFileName = "${System.currentTimeMillis()}_${name.replace(Regex("[^a-zA-Z0-9._-]"), "_")}"
             val localFile = File(cacheFolder, safeFileName)
 
+            // Stream file to cache using 8KB buffer without loading entire file into memory
             context.contentResolver.openInputStream(uri)?.use { input ->
-                val bytes = input.readBytes()
-                FileOutputStream(localFile).use { it.write(bytes) }
-                localCachedPath = localFile.absolutePath
-
-                if (isText) {
-                    cachedText = String(bytes, Charsets.UTF_8)
-                } else if (isPdf || isImage || bytes.size <= 15 * 1024 * 1024) {
-                    cachedBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                }
-
-                if (size <= 0) {
-                    size = bytes.size.toLong()
+                FileOutputStream(localFile).use { output ->
+                    input.copyTo(output)
                 }
             }
-        } catch (e: Exception) {
-            // Fallback if local copy fails
+
+            if (localFile.exists()) {
+                localCachedPath = localFile.absolutePath
+                if (size <= 0) {
+                    size = localFile.length()
+                }
+                // Only cache text content if it's genuinely a small text file (< 1MB)
+                if (isText && !isPdf && !isImage && size in 1..1_000_000) {
+                    cachedText = try {
+                        localFile.readText(Charsets.UTF_8)
+                    } catch (_: Throwable) {
+                        null
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+            // Graceful fallback if copy fails
         }
 
         return AttachedFile(
@@ -89,26 +94,29 @@ object FileUtils {
             isPdf = isPdf,
             isText = isText,
             cachedContent = cachedText,
-            cachedBase64 = cachedBase64,
+            cachedBase64 = null,
             localCachedPath = localCachedPath
         )
     }
 
     fun readFileContent(context: Context, file: AttachedFile): String? {
+        // Never attempt to read binary PDF or image as UTF-8 text string!
+        if (file.isPdf || file.isImage) return null
+
         if (!file.cachedContent.isNullOrBlank()) {
             return file.cachedContent
         }
-        if (!file.localCachedPath.isNullOrBlank()) {
-            val f = File(file.localCachedPath)
-            if (f.exists()) {
-                return try { f.readText(Charsets.UTF_8) } catch (e: Exception) { null }
+        try {
+            if (!file.localCachedPath.isNullOrBlank()) {
+                val f = File(file.localCachedPath)
+                if (f.exists() && f.length() <= 2 * 1024 * 1024) {
+                    return f.readText(Charsets.UTF_8)
+                }
             }
-        }
-        return try {
             val uri = Uri.parse(file.uri)
-            context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
-        } catch (e: Exception) {
-            null
+            return context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+        } catch (_: Throwable) {
+            return null
         }
     }
 
@@ -116,18 +124,22 @@ object FileUtils {
         if (!file.cachedBase64.isNullOrBlank()) {
             return file.cachedBase64
         }
-        if (!file.localCachedPath.isNullOrBlank()) {
-            val f = File(file.localCachedPath)
-            if (f.exists()) {
-                return try { Base64.encodeToString(f.readBytes(), Base64.NO_WRAP) } catch (e: Exception) { null }
+        try {
+            if (!file.localCachedPath.isNullOrBlank()) {
+                val f = File(file.localCachedPath)
+                if (f.exists() && f.length() <= 15 * 1024 * 1024) {
+                    val bytes = f.readBytes()
+                    return Base64.encodeToString(bytes, Base64.NO_WRAP)
+                }
             }
-        }
-        return try {
             val uri = Uri.parse(file.uri)
-            val bytes = context.contentResolver.openInputStream(uri)?.readBytes() ?: return null
-            Base64.encodeToString(bytes, Base64.NO_WRAP)
-        } catch (e: Exception) {
-            null
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+            if (bytes.size <= 15 * 1024 * 1024) {
+                return Base64.encodeToString(bytes, Base64.NO_WRAP)
+            }
+        } catch (_: Throwable) {
+            return null
         }
+        return null
     }
 }
